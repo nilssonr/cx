@@ -1,0 +1,14 @@
+## Name of the node
+-name cx@127.0.0.1
+
+## Cookie for distributed Erlang nodes
+-setcookie mysecretcookie
+
+## Enable SMP
+-smp enable
+
+## Number of async threads
++A 5
+
+## Kernel poll for efficiency (useful on Linux, generally safe)
++K true
