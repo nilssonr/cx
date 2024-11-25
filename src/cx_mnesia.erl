@@ -4,6 +4,10 @@
 
 -export([initialize/0, create_id/0]).
 
+%%%-------------------------------------------------------------------
+%%% Public API
+%%%-------------------------------------------------------------------
+
 initialize() ->
     mnesia:create_schema([node()]),
     mnesia:start(),
@@ -15,10 +19,17 @@ initialize() ->
 
 create_table(Name, Attributes) ->
     case mnesia:create_table(Name, [{attributes, Attributes}, {disc_copies, [node()]}]) of
-        {atomic, ok} -> {ok, created};
-        {aborted, {already_exists, Name}} -> {ok, already_exists};
-        {aborted, Reason} -> {error, Reason}
+        {atomic, ok} ->
+            {ok, created};
+        {aborted, {already_exists, Name}} ->
+            {ok, already_exists};
+        {aborted, Reason} ->
+            {error, Reason}
     end.
 
-create_id() ->
-    uuid:uuid_to_string(uuid:get_v4()).
+-spec create_id() -> binary().
+create_id() -> list_to_binary(uuid:uuid_to_string(uuid:get_v4())).
+
+%%%-------------------------------------------------------------------
+%% Internal functions
+%%%-------------------------------------------------------------------

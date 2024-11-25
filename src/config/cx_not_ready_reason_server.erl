@@ -45,7 +45,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%%-------------------------------------------------------------------
 
-create_not_ready_reason([{name, Name}, {tenant_id, TenantId}]) ->
+create_not_ready_reason(#{name := Name, tenant_id := TenantId}) ->
     NewNotReadyReason = #cx_not_ready_reason{
         id = cx_mnesia:create_id(),
         name = Name,

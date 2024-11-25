@@ -1,31 +1,31 @@
 -record(cx_not_ready_reason, {
-    id,
-    name,
-    tenant_id
+    id :: binary(),
+    name :: binary(),
+    tenant_id :: binary()
 }).
 
 -record(cx_service_group, {
-    id,
-    name,
-    tenant_id
+    id :: binary(),
+    name :: binary(),
+    tenant_id :: binary()
 }).
 
 -record(cx_skill, {
-    id,
-    name,
-    tenant_id
+    id :: binary(),
+    name :: binary(),
+    tenant_id :: binary()
 }).
 
 -record(cx_tenant, {
-    id,
-    name
+    id :: binary(),
+    name :: binary()
 }).
 
 -record(cx_user, {
-    id,
-    first_name,
-    last_name,
-    email_address,
-    password,
-    tenant_id
+    id :: binary(),
+    first_name :: binary(),
+    last_name :: binary(),
+    email_address :: binary(),
+    password :: binary(),
+    tenant_id :: binary()
 }).

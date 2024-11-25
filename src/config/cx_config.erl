@@ -1,4 +1,5 @@
 -module(cx_config).
+-include_lib("cx/include/cx_config.hrl").
 
 -export([
     create_tenant/1,
@@ -66,15 +67,19 @@ get_skill(TenantId, Id) ->
 delete_skill(TenantId, Id) ->
     gen_server:call(cx_skill_server, {delete, [{tenant_id, TenantId}, {id, Id}]}).
 
+-spec create_user(map()) -> {ok, #cx_user{}} | {error, bad_request} | {error, term()}.
 create_user(Values) ->
     gen_server:call(cx_user_server, {create, Values}).
 
+-spec get_user(binary()) -> {ok, list(#cx_user{})} | {error, term()}.
 get_user(TenantId) ->
     gen_server:call(cx_user_server, {get, TenantId}).
 
+-spec get_user(binary(), binary()) -> {ok, #cx_user{}} | {error, not_found} | {error, term()}.
 get_user(TenantId, Id) ->
     gen_server:call(cx_user_server, {get, TenantId, Id}).
 
+-spec delete_user(binary(), binary()) -> {ok, deleted} | {error, term()}.
 delete_user(TenantId, Id) ->
     gen_server:call(cx_user_server, {delete, [{tenant_id, TenantId}, {id, Id}]}).
 

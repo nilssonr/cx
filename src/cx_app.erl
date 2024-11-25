@@ -23,8 +23,8 @@ stop(_State) ->
 start_cowboy() ->
     Dispatch = cowboy_router:compile([
         {'_', [
-            {"/api/tenants", cx_tenant_handler, []}
-            % {"/api/tenants/[...]", cx_tenant_handler, []}
+            {"/api/tenants", cx_tenant_handler, []},
+            {"/api/tenants/[...]", cx_tenant_handler, []}
             % {"/api/users", user_handler, []},
             % {"/api/users/[...]", user_handler, []}
         ]}
