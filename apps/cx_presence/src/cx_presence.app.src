@@ -1,0 +1,17 @@
+{application, cx_presence, [
+    {description, "cx collaboration presence engine"},
+    {vsn, "0.1.0"},
+    {registered, [cx_presence_sup, cx_presence_session_sup]},
+    {mod, {cx_presence_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        cx_core
+    ]},
+    {env, [
+        {away_threshold_ms, 300000}
+    ]},
+    {modules, []},
+    {licenses, []},
+    {links, []}
+]}.

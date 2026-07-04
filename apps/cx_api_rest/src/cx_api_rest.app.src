@@ -9,7 +9,8 @@
         cowboy,
         cx_core,
         cx_auth,
-        cx_router
+        cx_router,
+        cx_presence
     ]},
     {env, [
         {port, 8080},
