@@ -36,8 +36,8 @@ req "$BOSS_TOKEN" POST /api/v1/tenants \
 
 BASE=/api/v1/tenants/$TENANT_ID
 
-echo "== media type + skill + queue (wrapup 3s)"
-MEDIA=$(req "$BOSS_TOKEN" POST "$BASE/media-types" '{"name":"open_media"}' | field id)
+echo "== skill + queue (wrapup 3s)"
+MEDIA=open_media
 SKILL=$(req "$BOSS_TOKEN" POST "$BASE/skills" \
     '{"name":"Permits","levels":[{"rank":1,"name":"trainee"},{"rank":2,"name":"expert"}]}' | field id)
 QUEUE=$(req "$BOSS_TOKEN" POST "$BASE/queues" \
@@ -64,7 +64,7 @@ req "$AGENT_TOKEN" PUT "/api/v1/agent/media/$MEDIA/state" '{"state":"ready"}'
 
 echo "== integrator: put a request on the queue"
 IID=$(req "$INTEGRATOR_TOKEN" POST /api/v1/interactions \
-    "{\"queue_id\":\"$QUEUE\",\"media_type_id\":\"$MEDIA\",
+    "{\"queue_id\":\"$QUEUE\",\"media_type\":\"$MEDIA\",
       \"properties\":{\"sap_case\":\"0815\",\"note\":\"call me maybe\"}}" | field id)
 echo "interaction=$IID"
 
@@ -87,7 +87,7 @@ req "$INTEGRATOR_TOKEN" GET "/api/v1/interactions/$IID"; echo
 
 echo "== wrap-up gates the next offer"
 IID2=$(req "$INTEGRATOR_TOKEN" POST /api/v1/interactions \
-    "{\"queue_id\":\"$QUEUE\",\"media_type_id\":\"$MEDIA\"}" | field id)
+    "{\"queue_id\":\"$QUEUE\",\"media_type\":\"$MEDIA\"}" | field id)
 sleep 1
 PENDING=$(req "$AGENT_TOKEN" GET /api/v1/agent/session \
     | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["pending_offers"]))')

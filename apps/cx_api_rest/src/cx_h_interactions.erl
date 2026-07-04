@@ -1,7 +1,7 @@
 -module(cx_h_interactions).
 
 %% Integrator surface:
-%%   POST   /api/v1/interactions      {"queue_id", "media_type_id", "properties"}
+%%   POST   /api/v1/interactions      {"queue_id", "media_type", "properties"}
 %%   GET    /api/v1/interactions/:id
 %%   DELETE /api/v1/interactions/:id  (cancel — only while queued)
 

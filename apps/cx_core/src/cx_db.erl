@@ -68,7 +68,6 @@ table_specs() ->
         ]},
         {cx_role, [{attributes, record_info(fields, cx_role)}, {type, set}, Disc]},
         {cx_skill, [{attributes, record_info(fields, cx_skill)}, {type, set}, Disc]},
-        {cx_media_type, [{attributes, record_info(fields, cx_media_type)}, {type, set}, Disc]},
         {cx_queue, [{attributes, record_info(fields, cx_queue)}, {type, set}, Disc]},
         {cx_routing_profile, [
             {attributes, record_info(fields, cx_routing_profile)}, {type, set}, Disc

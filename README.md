@@ -11,8 +11,10 @@ capacity rules, ready states and wrap-up that every future media type
 
 ## Design in one breath
 
-An **interaction** (any media type — media types are tenant data, not
-code) lands on a media-agnostic **queue**, waits with its position
+An **interaction** (any media type — voice, chat, sms, email,
+open_media, social_media: hard-coded product concepts, each backing a
+distinct agent-app UI) lands on a media-agnostic **queue**, waits with
+its position
 preserved no matter what, and is offered to the best **agent** whose
 per-media **ready state**, **wrap-up** gate, tenant-defined ordinal
 **skill levels** (no 1–100 theater) and configured **routing profile**
@@ -76,7 +78,7 @@ io:format("~s~n", [Token]).
 ```
 
 Then drive the API with curl (see the walkthrough in `scripts/demo.sh`):
-create a tenant, media type and queue; create a user with a role and a
+create a tenant and queue; create a user with a role and a
 routing profile; start an agent session; go ready; POST an interaction;
 poll the session for the offer; accept; complete; watch wrap-up gate the
 next offer.

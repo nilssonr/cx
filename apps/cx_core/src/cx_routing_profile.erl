@@ -115,11 +115,16 @@ parse_max_total(Params, Default) ->
         _ -> {ok, Default}
     end.
 
+%% Media names in caps and guards must come from cx_media:all() — a
+%% guard referencing a nonexistent media type would be dead config that
+%% silently never fires, so it's rejected at write time instead.
 parse_media_caps(Params, Default) ->
     case cx_params:opt_map(Params, <<"media_caps">>, Default) of
         {ok, Caps} ->
             Valid = lists:all(
-                fun({K, V}) -> is_binary(K) andalso is_integer(V) andalso V >= 0 end,
+                fun({K, V}) ->
+                    cx_media:is_valid(K) andalso is_integer(V) andalso V >= 0
+                end,
                 maps:to_list(Caps)
             ),
             case Valid of
@@ -138,11 +143,11 @@ parse_guards(Raw) when is_list(Raw) ->
                 W = maps:get(<<"when_media">>, M),
                 Gte = maps:get(<<"gte">>, M),
                 Block = maps:get(<<"block">>, M),
-                true = is_binary(W) andalso W =/= <<>>,
+                true = cx_media:is_valid(W),
                 true = is_integer(Gte) andalso Gte > 0,
                 true =
                     is_list(Block) andalso Block =/= [] andalso
-                        lists:all(fun is_binary/1, Block),
+                        lists:all(fun cx_media:is_valid/1, Block),
                 #rp_guard{when_media = W, gte = Gte, block = Block}
             end,
             Raw

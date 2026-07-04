@@ -15,7 +15,6 @@ routes() ->
         {"/api/v1/tenants/:tid/users[/:id]", cx_h_crud, #{module => cx_user}},
         {"/api/v1/tenants/:tid/roles[/:id]", cx_h_crud, #{module => cx_role}},
         {"/api/v1/tenants/:tid/skills[/:id]", cx_h_crud, #{module => cx_skill}},
-        {"/api/v1/tenants/:tid/media-types[/:id]", cx_h_crud, #{module => cx_media_type}},
         {"/api/v1/tenants/:tid/queues[/:id]", cx_h_crud, #{module => cx_queue}},
         {"/api/v1/tenants/:tid/routing-profiles[/:id]", cx_h_crud, #{module => cx_routing_profile}},
         {"/api/v1/tenants/:tid/not-ready-reasons[/:id]", cx_h_crud, #{
@@ -25,7 +24,7 @@ routes() ->
 
         %% agent operations — identity comes from the token, never the path
         {"/api/v1/agent/session", cx_h_agent_session, #{}},
-        {"/api/v1/agent/media/:media_id/state", cx_h_agent_ready, #{}},
+        {"/api/v1/agent/media/:media_type/state", cx_h_agent_ready, #{}},
         {"/api/v1/agent/offers/:offer_id/accept", cx_h_offer, #{op => accepted}},
         {"/api/v1/agent/offers/:offer_id/reject", cx_h_offer, #{op => rejected}},
         {"/api/v1/agent/interactions/:id/complete", cx_h_agent_interaction, #{}},

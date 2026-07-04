@@ -117,7 +117,7 @@ recover(Data = #qd{tenant = TenantId, queue_id = QueueId}) ->
         fun(Rec, {Acc, Actions}) ->
             Item = #witem{
                 interaction_id = element(2, Rec#cx_interaction.key),
-                media = Rec#cx_interaction.media_type_id,
+                media = Rec#cx_interaction.media_type,
                 skill_reqs = (Acc#qd.config)#cx_queue.skill_reqs,
                 enqueued_at = Rec#cx_interaction.enqueued_at,
                 seq = Rec#cx_interaction.seq
@@ -140,7 +140,7 @@ handle_event({call, From}, {enqueue, IId, Media, Props, CreatedAt}, _S, Data) ->
     Rec = #cx_interaction{
         key = {Data#qd.tenant, IId},
         queue_key = {Data#qd.tenant, Data#qd.queue_id},
-        media_type_id = Media,
+        media_type = Media,
         properties = Props,
         state = queued,
         created_at = CreatedAt,

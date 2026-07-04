@@ -91,15 +91,8 @@ admin_crud_roundtrip(Config) ->
                 ]
             }
         ),
-    %% media type, queue, profile, reason
-    {200, #{<<"id">> := MediaId}} =
-        req(
-            Config,
-            post,
-            Base ++ "/media-types",
-            Admin,
-            #{<<"name">> => <<"open_media">>}
-        ),
+    %% queue, profile, reason (media types are product constants)
+    MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(
             Config,
@@ -217,14 +210,7 @@ agent_open_media_flow(Config) ->
     Admin = boss_token(Config, Tid),
     Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
 
-    {200, #{<<"id">> := MediaId}} =
-        req(
-            Config,
-            post,
-            Base ++ "/media-types",
-            Admin,
-            #{<<"name">> => <<"open_media">>}
-        ),
+    MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(
             Config,
@@ -275,7 +261,7 @@ agent_open_media_flow(Config) ->
             Integrator,
             #{
                 <<"queue_id">> => QueueId,
-                <<"media_type_id">> => MediaId,
+                <<"media_type">> => MediaId,
                 <<"properties">> => #{<<"sap_case">> => <<"0815">>}
             }
         ),
@@ -325,14 +311,7 @@ integrator_cancel_rules(Config) ->
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"C">>}),
     Admin = boss_token(Config, Tid),
     Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
-    {200, #{<<"id">> := MediaId}} =
-        req(
-            Config,
-            post,
-            Base ++ "/media-types",
-            Admin,
-            #{<<"name">> => <<"open_media">>}
-        ),
+    MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(Config, post, Base ++ "/queues", Admin, #{<<"name">> => <<"q">>}),
     Integrator = user_token(
@@ -352,7 +331,7 @@ integrator_cancel_rules(Config) ->
             post,
             "/api/v1/interactions",
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => MediaId}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => MediaId}
         ),
     Path = "/api/v1/interactions/" ++ binary_to_list(IId),
     {204, _} = req(Config, delete, Path, Integrator),
@@ -368,7 +347,7 @@ integrator_cancel_rules(Config) ->
         Integrator,
         #{
             <<"queue_id">> => <<"nope">>,
-            <<"media_type_id">> => MediaId
+            <<"media_type">> => MediaId
         }
     ),
     {200, _} = req(
@@ -384,7 +363,7 @@ integrator_cancel_rules(Config) ->
             post,
             "/api/v1/interactions",
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => MediaId}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => MediaId}
         ),
     ok.
 
@@ -407,7 +386,7 @@ forbidden_without_permission(Config) ->
         post,
         "/api/v1/interactions",
         Nobody,
-        #{<<"queue_id">> => <<"q">>, <<"media_type_id">> => <<"m">>}
+        #{<<"queue_id">> => <<"q">>, <<"media_type">> => <<"m">>}
     ),
     {403, _} = req(Config, post, "/api/v1/agent/session", Nobody, #{}),
     ok.

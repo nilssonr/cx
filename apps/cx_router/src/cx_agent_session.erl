@@ -66,7 +66,7 @@ handle_event({call, From}, {set_ready, Media, NewState}, _State, Data) ->
         Media,
         agent_ready_changed,
         #{
-            <<"media_type_id">> => Media,
+            <<"media_type">> => Media,
             <<"state">> => ready_to_bin(NewState)
         }
     ),

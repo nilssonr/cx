@@ -14,7 +14,6 @@
     users/1,
     roles/1,
     skills/1,
-    media_types/1,
     queues/1,
     routing_profiles/1,
     not_ready_reasons/1,
@@ -29,8 +28,6 @@ users(TenantId) -> #cx_user{key = {TenantId, '_'}, _ = '_'}.
 roles(TenantId) -> #cx_role{key = {TenantId, '_'}, _ = '_'}.
 
 skills(TenantId) -> #cx_skill{key = {TenantId, '_'}, _ = '_'}.
-
-media_types(TenantId) -> #cx_media_type{key = {TenantId, '_'}, _ = '_'}.
 
 queues(TenantId) -> #cx_queue{key = {TenantId, '_'}, _ = '_'}.
 

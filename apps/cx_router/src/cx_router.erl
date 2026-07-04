@@ -53,13 +53,19 @@ get_session(Ctx = #auth_ctx{}) ->
 
 %% ---- readiness ----
 
-set_ready(Ctx = #auth_ctx{tenant_id = T}, MediaTypeId, ReadyState) ->
+set_ready(Ctx = #auth_ctx{tenant_id = T}, Media, ReadyState) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:ready:self">>),
-        {ok, _} ?= cx_media_type:fetch(T, MediaTypeId),
+        ok ?= valid_media(Media),
         ok ?= validate_reason(T, ReadyState),
         {ok, Pid} ?= session_of(Ctx),
-        call(Pid, {set_ready, MediaTypeId, ReadyState})
+        call(Pid, {set_ready, Media, ReadyState})
+    end.
+
+valid_media(Media) ->
+    case cx_media:is_valid(Media) of
+        true -> ok;
+        false -> {error, {invalid, <<"media_type">>}}
     end.
 
 validate_reason(_T, ready) ->
@@ -79,13 +85,13 @@ create_interaction(Ctx = #auth_ctx{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:create">>),
         {ok, QueueId} ?= cx_params:require_bin(Params, <<"queue_id">>),
-        {ok, MediaTypeId} ?= cx_params:require_bin(Params, <<"media_type_id">>),
+        {ok, Media} ?= cx_params:require_bin(Params, <<"media_type">>),
+        ok ?= valid_media(Media),
         {ok, Props} ?= validate_properties(Params),
         {ok, Queue} ?= cx_queue:fetch(T, QueueId),
         ok ?= open_queue(Queue),
-        {ok, _} ?= cx_media_type:fetch(T, MediaTypeId),
         {ok, QPid} ?= cx_queue_proc:ensure_started(T, QueueId),
-        {ok, IId} ?= call(QPid, {enqueue, cx_id:new(), MediaTypeId, Props, cx_time:now_ms()}),
+        {ok, IId} ?= call(QPid, {enqueue, cx_id:new(), Media, Props, cx_time:now_ms()}),
         {ok, #{<<"id">> => IId}}
     end.
 
@@ -200,7 +206,7 @@ validate_properties(Params) ->
 interaction_to_map(#cx_interaction{
     key = {_, Id},
     queue_key = {_, QueueId},
-    media_type_id = Media,
+    media_type = Media,
     properties = Props,
     state = State,
     agent_id = AgentId,
@@ -212,7 +218,7 @@ interaction_to_map(#cx_interaction{
     #{
         <<"id">> => Id,
         <<"queue_id">> => QueueId,
-        <<"media_type_id">> => Media,
+        <<"media_type">> => Media,
         <<"properties">> => Props,
         <<"state">> => atom_to_binary(State),
         <<"agent_id">> => undef_to_null(AgentId),

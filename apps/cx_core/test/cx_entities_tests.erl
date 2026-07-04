@@ -14,7 +14,6 @@ entities_test_() ->
             fun user_fetch_by_subject_scoped/0,
             fun role_crud/0,
             fun skill_crud_and_level_validation/0,
-            fun media_type_crud/0,
             fun queue_crud_and_skill_req_parsing/0,
             fun routing_profile_crud/0,
             fun not_ready_reason_crud/0,
@@ -155,15 +154,6 @@ skill_crud_and_level_validation() ->
     ),
     ok = cx_skill:delete(Ctx, Id).
 
-media_type_crud() ->
-    T = cx_id:new(),
-    Ctx = admin(T),
-    {ok, #{<<"id">> := Id, <<"name">> := <<"open_media">>}} =
-        cx_media_type:create(Ctx, #{<<"name">> => <<"open_media">>}),
-    {ok, #{<<"config">> := #{<<"k">> := <<"v">>}}} =
-        cx_media_type:update(Ctx, Id, #{<<"config">> => #{<<"k">> => <<"v">>}}),
-    ok = cx_media_type:delete(Ctx, Id).
-
 queue_crud_and_skill_req_parsing() ->
     T = cx_id:new(),
     Ctx = admin(T),
@@ -260,7 +250,6 @@ permission_denied() ->
     ?assertEqual({error, forbidden}, cx_queue:create(NoPerms, #{<<"name">> => <<"q">>})),
     ?assertEqual({error, forbidden}, cx_queue:list(NoPerms)),
     ?assertEqual({error, forbidden}, cx_skill:create(NoPerms, #{<<"name">> => <<"s">>})),
-    ?assertEqual({error, forbidden}, cx_media_type:create(NoPerms, #{<<"name">> => <<"m">>})),
     ?assertEqual({error, forbidden}, cx_routing_profile:create(NoPerms, #{<<"name">> => <<"p">>})),
     ?assertEqual({error, forbidden}, cx_not_ready_reason:create(NoPerms, #{<<"name">> => <<"r">>})),
     ?assertEqual({error, forbidden}, cx_role:create(NoPerms, #{<<"name">> => <<"r">>})),

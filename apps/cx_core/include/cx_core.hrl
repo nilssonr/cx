@@ -56,12 +56,6 @@
     levels = [] :: [{pos_integer(), binary()}]
 }).
 
--record(cx_media_type, {
-    key :: {binary(), binary()},
-    name :: binary(),
-    config = #{} :: map()
-}).
-
 %% Widening steps are sorted ascending by AfterMs with non-increasing
 %% ranks (validated at config write); each step REPLACES min_rank.
 -record(skill_req, {
@@ -106,7 +100,8 @@
 -record(cx_interaction, {
     key :: {binary(), binary()},
     queue_key :: {binary(), binary()},
-    media_type_id :: binary(),
+    %% one of cx_media:all() — media types are product concepts, not data
+    media_type :: binary(),
     properties = #{} :: #{binary() => binary()},
     state = queued :: queued | offered | active | completed | cancelled,
     agent_id :: binary() | undefined,

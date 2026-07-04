@@ -69,7 +69,7 @@ happy_path_with_wrapup(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"Building permits">>,
         <<"wrapup_duration_ms">> => 700
@@ -84,7 +84,7 @@ happy_path_with_wrapup(_Config) ->
             Integrator,
             #{
                 <<"queue_id">> => QueueId,
-                <<"media_type_id">> => Media,
+                <<"media_type">> => Media,
                 <<"properties">> => #{
                     <<"case">> => <<"42">>,
                     <<"source">> => <<"sap">>
@@ -113,7 +113,7 @@ happy_path_with_wrapup(_Config) ->
     {ok, #{<<"id">> := _I2}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     ?assertEqual(timeout, wait_event(offer_created, 300)),
     {ok, _} = wait_event(wrapup_ended, 2000),
@@ -125,7 +125,7 @@ multi_concurrent_offers(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -142,7 +142,7 @@ multi_concurrent_offers(_Config) ->
                     Integrator,
                     #{
                         <<"queue_id">> => QueueId,
-                        <<"media_type_id">> => Media
+                        <<"media_type">> => Media
                     }
                 ),
             I
@@ -165,7 +165,7 @@ reject_requeues_in_order(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -187,7 +187,7 @@ reject_requeues_in_order(_Config) ->
                         Integrator,
                         #{
                             <<"queue_id">> => QueueId,
-                            <<"media_type_id">> => Media
+                            <<"media_type">> => Media
                         }
                     ),
                 I
@@ -216,7 +216,7 @@ offer_timeout_requeues(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"offer_timeout_ms">> => 300,
@@ -229,7 +229,7 @@ offer_timeout_requeues(_Config) ->
     {ok, #{<<"id">> := I1}} =
         cx_router:create_interaction(
             integrator(T),
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserA}} =
         wait_data(offer_created),
@@ -247,7 +247,7 @@ widening_admits_lower_rank(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     SkillId = skill(Admin, <<"permits">>),
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
@@ -273,7 +273,7 @@ widening_admits_lower_rank(_Config) ->
 
     {ok, _} = cx_router:create_interaction(
         integrator(T),
-        #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+        #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
     ),
     %% rank 1 < required 3: no offer yet
     ?assertEqual(timeout, wait_event(offer_created, 300)),
@@ -285,8 +285,8 @@ guard_blocks_media(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Voice = media(Admin, <<"voice">>),
-    Om = media(Admin, <<"open_media">>),
+    Voice = <<"voice">>,
+    Om = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -312,7 +312,7 @@ guard_blocks_media(_Config) ->
     {ok, #{<<"id">> := IVoice}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Voice}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Voice}
         ),
     {ok, #{<<"offer_id">> := VOffer}} = wait_data(offer_created),
     ok = cx_router:accept_offer(Agent, VOffer),
@@ -321,7 +321,7 @@ guard_blocks_media(_Config) ->
     {ok, #{<<"id">> := _IOm}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Om}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Om}
         ),
     ?assertEqual(timeout, wait_event(offer_created, 300)),
 
@@ -333,7 +333,7 @@ not_ready_mid_offer(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -347,7 +347,7 @@ not_ready_mid_offer(_Config) ->
     {ok, #{<<"id">> := I1}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
 
@@ -356,7 +356,7 @@ not_ready_mid_offer(_Config) ->
     {ok, #{<<"id">> := _I2}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     ?assertEqual(timeout, wait_event(offer_created, 300)),
 
@@ -369,7 +369,7 @@ agent_crash_requeues(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -381,7 +381,7 @@ agent_crash_requeues(_Config) ->
     {ok, #{<<"id">> := I1}} =
         cx_router:create_interaction(
             integrator(T),
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, #{<<"interaction_id">> := I1}} = wait_data(offer_created),
 
@@ -400,7 +400,7 @@ queue_restart_preserves_order(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -414,7 +414,7 @@ queue_restart_preserves_order(_Config) ->
                         Integrator,
                         #{
                             <<"queue_id">> => QueueId,
-                            <<"media_type_id">> => Media
+                            <<"media_type">> => Media
                         }
                     ),
                 I
@@ -446,7 +446,7 @@ cancel_rules(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -457,7 +457,7 @@ cancel_rules(_Config) ->
     {ok, #{<<"id">> := I1}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     ok = cx_router:cancel_interaction(Integrator, I1),
     {ok, #{<<"state">> := <<"cancelled">>}} =
@@ -474,7 +474,7 @@ cancel_rules(_Config) ->
     {ok, #{<<"id">> := I2}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, _} = wait_event(offer_created),
     ?assertEqual(
@@ -487,7 +487,7 @@ wrapup_extend_cancel(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 60000
@@ -503,7 +503,7 @@ wrapup_extend_cancel(_Config) ->
     {ok, #{<<"id">> := I1}} =
         cx_router:create_interaction(
             Integrator,
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
     ok = cx_router:accept_offer(Agent, Offer1),
@@ -516,7 +516,7 @@ wrapup_extend_cancel(_Config) ->
     %% no offers while wrapped up
     {ok, _} = cx_router:create_interaction(
         Integrator,
-        #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+        #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
     ),
     ?assertEqual(timeout, wait_event(offer_created, 300)),
 
@@ -529,7 +529,7 @@ stop_session_rules(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
-    Media = media(Admin, <<"open_media">>),
+    Media = <<"open_media">>,
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
@@ -542,7 +542,7 @@ stop_session_rules(_Config) ->
     {ok, #{<<"id">> := I1}} =
         cx_router:create_interaction(
             integrator(T),
-            #{<<"queue_id">> => QueueId, <<"media_type_id">> => Media}
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
     ok = cx_router:accept_offer(Agent, Offer1),
@@ -590,10 +590,6 @@ agent_ctx(T, UserId) ->
             <<"interactions:read">>
         ]
     ).
-
-media(Admin, Name) ->
-    {ok, #{<<"id">> := Id}} = cx_media_type:create(Admin, #{<<"name">> => Name}),
-    Id.
 
 skill(Admin, Name) ->
     {ok, #{<<"id">> := Id}} = cx_skill:create(Admin, #{<<"name">> => Name}),

@@ -2,7 +2,10 @@
 
 Multi-tenant contact center on Erlang/OTP (rebar3 umbrella; OTP 29+).
 See README.md for architecture. "Interaction" is the canonical term for a
-customer session; media types are tenant data, never a code enum.
+customer session; media types are hard-coded product concepts
+(cx_media:all/0 — voice, chat, sms, email, open_media, social_media),
+each backing a distinct agent-app UI. Customers never define them;
+integrator extensibility goes through open_media + properties.
 
 ## Definition of done
 
