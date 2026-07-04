@@ -18,6 +18,11 @@ A change is done only when ALL of these pass:
 Never mark work complete with a failing or skipped gate. If a gate cannot
 pass for a good reason, stop and say so instead of suppressing it.
 
+CI (`.github/workflows/ci.yml`) enforces this same gate on every PR and
+on pushes to main. Releases are cut by pushing a `v*` tag that matches
+the relx release version (`.github/workflows/release.yml`) — merging
+never releases.
+
 ## eqWAlizer rules
 
 - Record types in `cx_core.hrl` stay honest — never add `'_'` (or other

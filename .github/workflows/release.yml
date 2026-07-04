@@ -1,0 +1,61 @@
+name: Release
+
+# Releases are cut from tags, never from merges: push a v* tag matching
+# the relx release version and this packages the prod tarball into a
+# GitHub Release — after the full CI gate passes on the tagged commit.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  gate:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.0.3"
+          rebar3-version: "3.27"
+
+      - name: Cache rebar3 deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/rebar3
+            _build
+          key: ${{ runner.os }}-otp29.0.3-rebar-${{ hashFiles('rebar.lock', 'rebar.config') }}
+          restore-keys: |
+            ${{ runner.os }}-otp29.0.3-rebar-
+
+      - name: Tag must match the relx release version
+        run: |
+          VSN=$(erl -noshell -eval '
+              {ok, Terms} = file:consult("rebar.config"),
+              {relx, Relx} = lists:keyfind(relx, 1, Terms),
+              {release, {cx, Vsn}, _} = lists:keyfind(release, 1, Relx),
+              io:format("~s", [Vsn]), halt(0).')
+          echo "relx version: $VSN — tag: $GITHUB_REF_NAME"
+          if [ "$GITHUB_REF_NAME" != "v$VSN" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match relx version $VSN (expected v$VSN)"
+            exit 1
+          fi
+
+      - name: Build prod release tarball
+        run: rebar3 as prod tar
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            _build/prod/rel/cx/cx-*.tar.gz \
+            --title "cx $GITHUB_REF_NAME" \
+            --generate-notes

@@ -1,0 +1,85 @@
+name: CI
+
+# The PR gate: exactly the CLAUDE.md definition of done, nothing more.
+# Also reusable (workflow_call) so the release workflow runs the same
+# gate against tagged commits — one definition, zero drift.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+env:
+  OTP_VERSION: "29.0.3"
+  REBAR3_VERSION: "3.27"
+  # Bump deliberately, in a PR, like any dependency. ELP ships no OTP 29
+  # binary yet; the otp-28 build works against this project (verified).
+  ELP_RELEASE: "2026-06-10"
+  ELP_ASSET: "elp-linux-x86_64-unknown-linux-gnu-otp-28.tar.gz"
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          rebar3-version: ${{ env.REBAR3_VERSION }}
+
+      - name: Cache rebar3 deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/rebar3
+            _build
+          key: ${{ runner.os }}-otp${{ env.OTP_VERSION }}-rebar-${{ hashFiles('rebar.lock', 'rebar.config') }}
+          restore-keys: |
+            ${{ runner.os }}-otp${{ env.OTP_VERSION }}-rebar-
+
+      - name: Cache ELP binary
+        id: elp-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/elp
+          key: elp-${{ env.ELP_RELEASE }}-${{ env.ELP_ASSET }}
+
+      - name: Install ELP
+        if: steps.elp-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          curl -fsSL \
+            "https://github.com/WhatsApp/erlang-language-platform/releases/download/${ELP_RELEASE}/${ELP_ASSET}" \
+            | tar -xz -C ~/.local/bin
+          chmod +x ~/.local/bin/elp
+
+      - name: Add ELP to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile (warnings are errors)
+        run: rebar3 as ci compile
+
+      - name: Format check
+        run: rebar3 fmt --check
+
+      - name: EUnit + PropEr
+        run: rebar3 eunit
+
+      - name: Common Test
+        run: rebar3 ct
+
+      - name: eqWAlizer
+        run: elp eqwalize-all
+
+      - name: ELP lint
+        run: elp lint --read-config
+
+      - name: Upload CT logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ct-logs
+          path: _build/test/logs
+          if-no-files-found: ignore
