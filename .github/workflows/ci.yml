@@ -3,6 +3,12 @@ name: CI
 # The PR gate: exactly the CLAUDE.md definition of done, nothing more.
 # Also reusable (workflow_call) so the release workflow runs the same
 # gate against tagged commits — one definition, zero drift.
+#
+# Two jobs because of a toolchain mismatch: builds/tests run on OTP 29
+# (dev parity), while ELP/eqWAlizer runs on an OTP 28 toolchain — the
+# newest ELP release only ships otp-28 Linux binaries, and that binary
+# panics against OTP 29 BEAM files. Fold back into one job when ELP
+# ships an OTP 29 asset.
 
 on:
   pull_request:
@@ -10,17 +16,12 @@ on:
     branches: [main]
   workflow_call:
 
-env:
-  OTP_VERSION: "29.0.3"
-  REBAR3_VERSION: "3.27"
-  # Bump deliberately, in a PR, like any dependency. ELP ships no OTP 29
-  # binary yet; the otp-28 build works against this project (verified).
-  ELP_RELEASE: "2026-06-10"
-  ELP_ASSET: "elp-linux-x86_64-unknown-linux-gnu-otp-28.tar.gz"
-
 jobs:
   gate:
     runs-on: ubuntu-24.04
+    env:
+      OTP_VERSION: "29.0.3"
+      REBAR3_VERSION: "3.27"
     steps:
       - uses: actions/checkout@v4
 
@@ -35,9 +36,56 @@ jobs:
           path: |
             ~/.cache/rebar3
             _build
-          key: ${{ runner.os }}-otp${{ env.OTP_VERSION }}-rebar-${{ hashFiles('rebar.lock', 'rebar.config') }}
+          key: gate-${{ runner.os }}-otp${{ env.OTP_VERSION }}-${{ hashFiles('rebar.lock', 'rebar.config') }}
           restore-keys: |
-            ${{ runner.os }}-otp${{ env.OTP_VERSION }}-rebar-
+            gate-${{ runner.os }}-otp${{ env.OTP_VERSION }}-
+
+      - name: Compile (warnings are errors)
+        run: rebar3 as ci compile
+
+      - name: Format check
+        run: rebar3 fmt --check
+
+      - name: EUnit + PropEr
+        run: rebar3 eunit
+
+      - name: Common Test
+        run: rebar3 ct
+
+      - name: Upload CT logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ct-logs
+          path: _build/test/logs
+          if-no-files-found: ignore
+
+  typing:
+    runs-on: ubuntu-24.04
+    env:
+      # Must match the ELP asset's OTP flavor — see header comment.
+      OTP_VERSION: "28.5.0.3"
+      REBAR3_VERSION: "3.27"
+      # Bump deliberately, in a PR, like any dependency.
+      ELP_RELEASE: "2026-06-10"
+      ELP_ASSET: "elp-linux-x86_64-unknown-linux-gnu-otp-28.tar.gz"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          rebar3-version: ${{ env.REBAR3_VERSION }}
+
+      - name: Cache rebar3 deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/rebar3
+            _build
+          key: typing-${{ runner.os }}-otp${{ env.OTP_VERSION }}-${{ hashFiles('rebar.lock', 'rebar.config') }}
+          restore-keys: |
+            typing-${{ runner.os }}-otp${{ env.OTP_VERSION }}-
 
       - name: Cache ELP binary
         id: elp-cache
@@ -58,28 +106,11 @@ jobs:
       - name: Add ELP to PATH
         run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Compile (warnings are errors)
-        run: rebar3 as ci compile
-
-      - name: Format check
-        run: rebar3 fmt --check
-
-      - name: EUnit + PropEr
-        run: rebar3 eunit
-
-      - name: Common Test
-        run: rebar3 ct
+      - name: Compile
+        run: rebar3 compile
 
       - name: eqWAlizer
         run: elp eqwalize-all
 
       - name: ELP lint
         run: elp lint --read-config
-
-      - name: Upload CT logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ct-logs
-          path: _build/test/logs
-          if-no-files-found: ignore
