@@ -17,7 +17,7 @@
     media_types/1,
     queues/1,
     routing_profiles/1,
-    nr_reasons/1,
+    not_ready_reasons/1,
     open_queues/0,
     presences/1
 ]).
@@ -37,7 +37,7 @@ queues(TenantId) -> #cx_queue{key = {TenantId, '_'}, _ = '_'}.
 routing_profiles(TenantId) ->
     #cx_routing_profile{key = {TenantId, '_'}, _ = '_'}.
 
-nr_reasons(TenantId) -> #cx_nr_reason{key = {TenantId, '_'}, _ = '_'}.
+not_ready_reasons(TenantId) -> #cx_not_ready_reason{key = {TenantId, '_'}, _ = '_'}.
 
 open_queues() -> #cx_queue{status = open, _ = '_'}.
 

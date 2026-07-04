@@ -17,7 +17,7 @@ entities_test_() ->
             fun media_type_crud/0,
             fun queue_crud_and_skill_req_parsing/0,
             fun routing_profile_crud/0,
-            fun nr_reason_crud/0,
+            fun not_ready_reason_crud/0,
             fun permission_denied/0
         ]
     end}.
@@ -238,16 +238,16 @@ routing_profile_crud() ->
     ),
     ok = cx_routing_profile:delete(Ctx, Id).
 
-nr_reason_crud() ->
+not_ready_reason_crud() ->
     T = cx_id:new(),
     Ctx = admin(T),
     {ok, #{<<"id">> := Id, <<"active">> := true}} =
-        cx_nr_reason:create(Ctx, #{<<"name">> => <<"Lunch">>}),
+        cx_not_ready_reason:create(Ctx, #{<<"name">> => <<"Lunch">>}),
     {ok, #{<<"active">> := false}} =
-        cx_nr_reason:update(Ctx, Id, #{<<"active">> => false}),
+        cx_not_ready_reason:update(Ctx, Id, #{<<"active">> => false}),
     NoPerms = cx_authz:ctx(T, []),
-    {ok, [_]} = cx_nr_reason:list(NoPerms),
-    ok = cx_nr_reason:delete(Ctx, Id).
+    {ok, [_]} = cx_not_ready_reason:list(NoPerms),
+    ok = cx_not_ready_reason:delete(Ctx, Id).
 
 permission_denied() ->
     T = cx_id:new(),
@@ -262,6 +262,6 @@ permission_denied() ->
     ?assertEqual({error, forbidden}, cx_skill:create(NoPerms, #{<<"name">> => <<"s">>})),
     ?assertEqual({error, forbidden}, cx_media_type:create(NoPerms, #{<<"name">> => <<"m">>})),
     ?assertEqual({error, forbidden}, cx_routing_profile:create(NoPerms, #{<<"name">> => <<"p">>})),
-    ?assertEqual({error, forbidden}, cx_nr_reason:create(NoPerms, #{<<"name">> => <<"r">>})),
+    ?assertEqual({error, forbidden}, cx_not_ready_reason:create(NoPerms, #{<<"name">> => <<"r">>})),
     ?assertEqual({error, forbidden}, cx_role:create(NoPerms, #{<<"name">> => <<"r">>})),
     ?assertEqual({error, forbidden}, cx_tenant:create(NoPerms, #{<<"name">> => <<"t">>})).

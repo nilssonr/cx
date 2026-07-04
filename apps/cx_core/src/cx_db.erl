@@ -73,7 +73,9 @@ table_specs() ->
         {cx_routing_profile, [
             {attributes, record_info(fields, cx_routing_profile)}, {type, set}, Disc
         ]},
-        {cx_nr_reason, [{attributes, record_info(fields, cx_nr_reason)}, {type, set}, Disc]},
+        {cx_not_ready_reason, [
+            {attributes, record_info(fields, cx_not_ready_reason)}, {type, set}, Disc
+        ]},
         {cx_interaction, [
             {attributes, record_info(fields, cx_interaction)},
             {type, set},

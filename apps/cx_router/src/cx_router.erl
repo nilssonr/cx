@@ -67,9 +67,9 @@ validate_reason(_T, ready) ->
 validate_reason(_T, {not_ready, undefined}) ->
     ok;
 validate_reason(T, {not_ready, ReasonId}) ->
-    case cx_nr_reason:fetch(T, ReasonId) of
-        {ok, #cx_nr_reason{active = true}} -> ok;
-        {ok, #cx_nr_reason{active = false}} -> {error, {invalid, <<"reason_id">>}};
+    case cx_not_ready_reason:fetch(T, ReasonId) of
+        {ok, #cx_not_ready_reason{active = true}} -> ok;
+        {ok, #cx_not_ready_reason{active = false}} -> {error, {invalid, <<"reason_id">>}};
         {error, not_found} -> {error, {invalid, <<"reason_id">>}}
     end.
 

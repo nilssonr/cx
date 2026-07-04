@@ -1,4 +1,4 @@
--module(cx_nr_reason).
+-module(cx_not_ready_reason).
 
 -include("cx_core.hrl").
 
@@ -7,56 +7,56 @@
 
 create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"nr_reasons:write">>),
+        ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
         {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
-        Rec = #cx_nr_reason{key = {T, cx_id:new()}, name = Name, active = true},
+        Rec = #cx_not_ready_reason{key = {T, cx_id:new()}, name = Name, active = true},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
-        publish(T, element(2, Rec#cx_nr_reason.key), nr_reason_created),
+        publish(T, element(2, Rec#cx_not_ready_reason.key), not_ready_reason_created),
         {ok, to_map(Rec)}
     end.
 
 %% Reads are open to any tenant member: agents need the reason list.
 get(#auth_ctx{tenant_id = T}, ReasonId) ->
     maybe
-        {ok, Rec} ?= cx_store:read(cx_nr_reason, {T, ReasonId}),
+        {ok, Rec} ?= cx_store:read(cx_not_ready_reason, {T, ReasonId}),
         {ok, to_map(Rec)}
     end.
 
 list(#auth_ctx{tenant_id = T}) ->
-    Recs = cx_store:list(cx_nr_reason, cx_patterns:nr_reasons(T)),
+    Recs = cx_store:list(cx_not_ready_reason, cx_patterns:not_ready_reasons(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
 update(Ctx = #auth_ctx{tenant_id = T}, ReasonId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"nr_reasons:write">>),
-        {ok, Rec0} ?= cx_store:read(cx_nr_reason, {T, ReasonId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_nr_reason.name),
-        {ok, Active} ?= parse_active(Params, Rec0#cx_nr_reason.active),
-        Rec = Rec0#cx_nr_reason{name = Name, active = Active},
+        ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
+        {ok, Rec0} ?= cx_store:read(cx_not_ready_reason, {T, ReasonId}),
+        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_not_ready_reason.name),
+        {ok, Active} ?= parse_active(Params, Rec0#cx_not_ready_reason.active),
+        Rec = Rec0#cx_not_ready_reason{name = Name, active = Active},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
-        publish(T, ReasonId, nr_reason_updated),
+        publish(T, ReasonId, not_ready_reason_updated),
         {ok, to_map(Rec)}
     end.
 
 delete(Ctx = #auth_ctx{tenant_id = T}, ReasonId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"nr_reasons:write">>),
+        ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
         ok ?=
             cx_store:tx(fun() ->
-                case mnesia:read(cx_nr_reason, {T, ReasonId}) of
-                    [_] -> mnesia:delete({cx_nr_reason, {T, ReasonId}});
+                case mnesia:read(cx_not_ready_reason, {T, ReasonId}) of
+                    [_] -> mnesia:delete({cx_not_ready_reason, {T, ReasonId}});
                     [] -> {error, not_found}
                 end
             end),
-        publish(T, ReasonId, nr_reason_deleted),
+        publish(T, ReasonId, not_ready_reason_deleted),
         ok
     end.
 
--spec fetch(binary(), binary()) -> {ok, #cx_nr_reason{}} | {error, not_found}.
+-spec fetch(binary(), binary()) -> {ok, #cx_not_ready_reason{}} | {error, not_found}.
 fetch(TenantId, ReasonId) ->
-    cx_store:read(cx_nr_reason, {TenantId, ReasonId}).
+    cx_store:read(cx_not_ready_reason, {TenantId, ReasonId}).
 
-to_map(#cx_nr_reason{key = {_, Id}, name = Name, active = Active}) ->
+to_map(#cx_not_ready_reason{key = {_, Id}, name = Name, active = Active}) ->
     #{<<"id">> => Id, <<"name">> => Name, <<"active">> => Active}.
 
 parse_active(Params, Default) ->

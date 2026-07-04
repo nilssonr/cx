@@ -338,7 +338,7 @@ not_ready_mid_offer(_Config) ->
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0
     }),
-    ReasonId = nr_reason(Admin, <<"Lunch">>),
+    ReasonId = not_ready_reason(Admin, <<"Lunch">>),
     UserId = user(Admin, #{}, undefined),
     Agent = start_agent(T, UserId),
     ok = cx_router:set_ready(Agent, Media, ready),
@@ -607,8 +607,8 @@ profile(Admin, Params) ->
     {ok, #{<<"id">> := Id}} = cx_routing_profile:create(Admin, Params),
     Id.
 
-nr_reason(Admin, Name) ->
-    {ok, #{<<"id">> := Id}} = cx_nr_reason:create(Admin, #{<<"name">> => Name}),
+not_ready_reason(Admin, Name) ->
+    {ok, #{<<"id">> := Id}} = cx_not_ready_reason:create(Admin, #{<<"name">> => Name}),
     Id.
 
 user(Admin, Skills, ProfileId) ->

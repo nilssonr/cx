@@ -18,7 +18,9 @@ routes() ->
         {"/api/v1/tenants/:tid/media-types[/:id]", cx_h_crud, #{module => cx_media_type}},
         {"/api/v1/tenants/:tid/queues[/:id]", cx_h_crud, #{module => cx_queue}},
         {"/api/v1/tenants/:tid/routing-profiles[/:id]", cx_h_crud, #{module => cx_routing_profile}},
-        {"/api/v1/tenants/:tid/not-ready-reasons[/:id]", cx_h_crud, #{module => cx_nr_reason}},
+        {"/api/v1/tenants/:tid/not-ready-reasons[/:id]", cx_h_crud, #{
+            module => cx_not_ready_reason
+        }},
         {"/api/v1/tenants[/:tid]", cx_h_tenants, #{}},
 
         %% agent operations — identity comes from the token, never the path

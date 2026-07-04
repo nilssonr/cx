@@ -94,7 +94,7 @@
     guards = [] :: [#rp_guard{}]
 }).
 
--record(cx_nr_reason, {
+-record(cx_not_ready_reason, {
     key :: {binary(), binary()},
     name :: binary(),
     active = true :: boolean()
