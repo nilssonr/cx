@@ -10,6 +10,9 @@ entities_test_() ->
             fun tenant_explicit_id/0,
             fun tenant_read_own_only/0,
             fun user_crud/0,
+            fun user_unknown_references_rejected/0,
+            fun delete_blocked_while_referenced/0,
+            fun queue_unknown_skill_req_rejected/0,
             fun user_tenant_scoping/0,
             fun user_fetch_by_subject_scoped/0,
             fun role_crud/0,
@@ -71,23 +74,102 @@ tenant_read_own_only() ->
 user_crud() ->
     T = cx_id:new(),
     Ctx = admin(T),
-    {ok, #{<<"id">> := Id, <<"skills">> := #{<<"s1">> := 3}}} =
+    {ok, #{<<"id">> := SkillId}} = cx_skill:create(Ctx, #{<<"name">> => <<"s1">>}),
+    {ok, #{<<"id">> := Id, <<"skills">> := SkillsOut}} =
         cx_user:create(Ctx, #{
             <<"name">> => <<"Robin">>,
             <<"email">> => <<"r@x.dev">>,
             <<"subject">> => <<"sub-1">>,
-            <<"skills">> => #{<<"s1">> => 3}
+            <<"skills">> => [#{<<"skill_id">> => SkillId, <<"rank">> => 3}]
         }),
+    %% list-of-objects wire shape survives the round trip
+    ?assertEqual([#{<<"skill_id">> => SkillId, <<"rank">> => 3}], SkillsOut),
     {ok, #{<<"email">> := <<"r@x.dev">>}} = cx_user:get(Ctx, Id),
     {ok, #{<<"status">> := <<"disabled">>}} =
         cx_user:update(Ctx, Id, #{<<"status">> => <<"disabled">>}),
     ?assertEqual(
         {error, {invalid, <<"skills">>}},
-        cx_user:update(Ctx, Id, #{<<"skills">> => #{<<"s1">> => 0}})
+        cx_user:update(Ctx, Id, #{
+            <<"skills">> => [#{<<"skill_id">> => SkillId, <<"rank">> => 0}]
+        })
+    ),
+    %% duplicate skill_ids are rejected, not last-write-wins
+    ?assertEqual(
+        {error, {invalid, <<"skills">>}},
+        cx_user:update(Ctx, Id, #{
+            <<"skills">> => [
+                #{<<"skill_id">> => SkillId, <<"rank">> => 1},
+                #{<<"skill_id">> => SkillId, <<"rank">> => 2}
+            ]
+        })
     ),
     {ok, [_]} = cx_user:list(Ctx),
     ok = cx_user:delete(Ctx, Id),
     ?assertEqual({error, not_found}, cx_user:get(Ctx, Id)).
+
+user_unknown_references_rejected() ->
+    T = cx_id:new(),
+    Ctx = admin(T),
+    Base = #{<<"name">> => <<"X">>, <<"email">> => <<"x@x">>},
+    ?assertEqual(
+        {error, {invalid, <<"skills">>}},
+        cx_user:create(Ctx, Base#{
+            <<"skills">> => [#{<<"skill_id">> => <<"ghost">>, <<"rank">> => 1}]
+        })
+    ),
+    ?assertEqual(
+        {error, {invalid, <<"role_ids">>}},
+        cx_user:create(Ctx, Base#{<<"role_ids">> => [<<"ghost">>]})
+    ),
+    ?assertEqual(
+        {error, {invalid, <<"routing_profile_id">>}},
+        cx_user:create(Ctx, Base#{<<"routing_profile_id">> => <<"ghost">>})
+    ).
+
+delete_blocked_while_referenced() ->
+    T = cx_id:new(),
+    Ctx = admin(T),
+    {ok, #{<<"id">> := SkillId}} = cx_skill:create(Ctx, #{<<"name">> => <<"s">>}),
+    {ok, #{<<"id">> := RoleId}} = cx_role:create(Ctx, #{<<"name">> => <<"r">>}),
+    {ok, #{<<"id">> := ProfileId}} =
+        cx_routing_profile:create(Ctx, #{<<"name">> => <<"p">>}),
+    {ok, #{<<"id">> := UserId}} =
+        cx_user:create(Ctx, #{
+            <<"name">> => <<"U">>,
+            <<"email">> => <<"u@x">>,
+            <<"skills">> => [#{<<"skill_id">> => SkillId, <<"rank">> => 1}],
+            <<"role_ids">> => [RoleId],
+            <<"routing_profile_id">> => ProfileId
+        }),
+    ?assertEqual({error, in_use}, cx_skill:delete(Ctx, SkillId)),
+    ?assertEqual({error, in_use}, cx_role:delete(Ctx, RoleId)),
+    ?assertEqual({error, in_use}, cx_routing_profile:delete(Ctx, ProfileId)),
+
+    %% queues holding a skill requirement also block the skill
+    {ok, #{<<"id">> := QueueId}} =
+        cx_queue:create(Ctx, #{
+            <<"name">> => <<"q">>,
+            <<"skill_reqs">> => [#{<<"skill_id">> => SkillId, <<"min_rank">> => 1}]
+        }),
+    ok = cx_user:delete(Ctx, UserId),
+    ?assertEqual({error, in_use}, cx_skill:delete(Ctx, SkillId)),
+
+    %% once nothing references them, deletes go through
+    ok = cx_queue:delete(Ctx, QueueId),
+    ok = cx_skill:delete(Ctx, SkillId),
+    ok = cx_role:delete(Ctx, RoleId),
+    ok = cx_routing_profile:delete(Ctx, ProfileId).
+
+queue_unknown_skill_req_rejected() ->
+    T = cx_id:new(),
+    Ctx = admin(T),
+    ?assertEqual(
+        {error, {invalid, <<"skill_reqs">>}},
+        cx_queue:create(Ctx, #{
+            <<"name">> => <<"q">>,
+            <<"skill_reqs">> => [#{<<"skill_id">> => <<"ghost">>, <<"min_rank">> => 1}]
+        })
+    ).
 
 user_tenant_scoping() ->
     T1 = cx_id:new(),
@@ -157,9 +239,10 @@ skill_crud_and_level_validation() ->
 queue_crud_and_skill_req_parsing() ->
     T = cx_id:new(),
     Ctx = admin(T),
+    {ok, #{<<"id">> := S1}} = cx_skill:create(Ctx, #{<<"name">> => <<"s1">>}),
     Reqs = [
         #{
-            <<"skill_id">> => <<"s1">>,
+            <<"skill_id">> => S1,
             <<"min_rank">> => 3,
             <<"widening">> => [
                 #{<<"after_ms">> => 60000, <<"min_rank">> => 1},

@@ -18,6 +18,7 @@
     cancel_rules/1,
     wrapup_extend_cancel/1,
     stop_session_rules/1,
+    dangling_profile_fails_closed/1,
     facade_permissions/1
 ]).
 
@@ -35,6 +36,7 @@ all() ->
         cancel_rules,
         wrapup_extend_cancel,
         stop_session_rules,
+        dangling_profile_fails_closed,
         facade_permissions
     ].
 
@@ -553,6 +555,21 @@ stop_session_rules(_Config) ->
     ?assertEqual({error, no_session}, cx_router:set_ready(Agent, Media, ready)),
     ok.
 
+%% A configured-but-missing routing profile must refuse the session —
+%% never silently fall back to unlimited capacity. The dangler is forged
+%% with a direct Mnesia write because the API layer now prevents it.
+dangling_profile_fails_closed(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    UserId = user(Admin, #{}, undefined),
+    {ok, Rec} = cx_user:fetch(T, UserId),
+    ok = mnesia:dirty_write(Rec#cx_user{routing_profile_id = <<"ghost">>}),
+    ?assertEqual(
+        {error, profile_missing},
+        cx_router:start_session(agent_ctx(T, UserId))
+    ),
+    ok.
+
 facade_permissions(_Config) ->
     T = cx_id:new(),
     NoPerms = cx_authz:ctx(T, <<"u">>, <<"s">>, []),
@@ -608,10 +625,14 @@ not_ready_reason(Admin, Name) ->
     Id.
 
 user(Admin, Skills, ProfileId) ->
+    SkillsList = [
+        #{<<"skill_id">> => S, <<"rank">> => R}
+     || {S, R} <- maps:to_list(Skills)
+    ],
     Base = #{
         <<"name">> => <<"Agent">>,
         <<"email">> => <<"a@x">>,
-        <<"skills">> => Skills
+        <<"skills">> => SkillsList
     },
     Params =
         case ProfileId of

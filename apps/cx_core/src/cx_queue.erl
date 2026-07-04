@@ -21,7 +21,7 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
             offer_timeout_ms = OfferMs,
             status = Status
         },
-        ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
+        ok ?= write_checked(T, Rec),
         publish(T, element(2, Rec#cx_queue.key), queue_created),
         {ok, to_map(Rec)}
     end.
@@ -76,7 +76,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
             offer_timeout_ms = OfferMs,
             status = Status
         },
-        ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
+        ok ?= write_checked(T, Rec),
         publish(T, QueueId, queue_updated),
         {ok, to_map(Rec)}
     end.
@@ -98,6 +98,18 @@ delete(Ctx = #auth_ctx{tenant_id = T}, QueueId) ->
 -spec fetch(binary(), binary()) -> {ok, #cx_queue{}} | {error, not_found}.
 fetch(TenantId, QueueId) ->
     cx_store:read(cx_queue, {TenantId, QueueId}).
+
+%% Write inside one transaction with the skill existence checks, so a
+%% concurrent skill delete cannot race a dangling requirement in.
+write_checked(T, Rec) ->
+    cx_store:tx(fun() ->
+        SkillIds = [S || #skill_req{skill_id = S} <- Rec#cx_queue.skill_reqs],
+        Missing = [S || S <- SkillIds, mnesia:read(cx_skill, {T, S}) =:= []],
+        case Missing of
+            [] -> mnesia:write(Rec);
+            _ -> {error, {invalid, <<"skill_reqs">>}}
+        end
+    end).
 
 to_map(#cx_queue{
     key = {_, Id},

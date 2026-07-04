@@ -66,19 +66,33 @@ update(Ctx = #auth_ctx{tenant_id = T}, ProfileId, Params) ->
         {ok, to_map(Rec)}
     end.
 
+%% Deleting a profile users reference is blocked (409): a dangling
+%% profile reference must never happen — the session-start fallback for
+%% it fails closed, refusing the session.
 delete(Ctx = #auth_ctx{tenant_id = T}, ProfileId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_routing_profile, {T, ProfileId}) of
-                    [_] -> mnesia:delete({cx_routing_profile, {T, ProfileId}});
-                    [] -> {error, not_found}
+                    [] ->
+                        {error, not_found};
+                    [_] ->
+                        case referenced(T, ProfileId) of
+                            true -> {error, in_use};
+                            false -> mnesia:delete({cx_routing_profile, {T, ProfileId}})
+                        end
                 end
             end),
         publish(T, ProfileId, routing_profile_deleted),
         ok
     end.
+
+referenced(T, ProfileId) ->
+    lists:any(
+        fun(#cx_user{routing_profile_id = P}) -> P =:= ProfileId end,
+        mnesia:match_object(cx_patterns:users(T))
+    ).
 
 -spec fetch(binary(), binary()) -> {ok, #cx_routing_profile{}} | {error, not_found}.
 fetch(TenantId, ProfileId) ->

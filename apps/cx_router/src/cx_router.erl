@@ -23,7 +23,7 @@ start_session(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
         ok ?= known_user(UserId),
         {ok, User} ?= cx_user:fetch(T, UserId),
         ok ?= active_user(User),
-        Profile = load_profile(T, User#cx_user.routing_profile_id),
+        {ok, Profile} ?= load_profile(T, User#cx_user.routing_profile_id),
         case
             cx_agent_session_sup:start_session(
                 T,
@@ -178,11 +178,13 @@ active_user(#cx_user{}) -> {error, forbidden}.
 
 load_profile(_T, undefined) ->
     %% no profile configured: nothing is limited (the superhuman default)
-    #cx_routing_profile{key = {<<>>, <<>>}, name = <<"unlimited">>};
+    {ok, #cx_routing_profile{key = {<<>>, <<>>}, name = <<"unlimited">>}};
 load_profile(T, ProfileId) ->
+    %% a configured-but-missing profile fails CLOSED: refusing the session
+    %% is recoverable, silently substituting unlimited capacity is not
     case cx_routing_profile:fetch(T, ProfileId) of
-        {ok, Profile} -> Profile;
-        {error, not_found} -> #cx_routing_profile{key = {<<>>, <<>>}, name = <<"unlimited">>}
+        {ok, Profile} -> {ok, Profile};
+        {error, not_found} -> {error, profile_missing}
     end.
 
 open_queue(#cx_queue{status = open}) -> ok;

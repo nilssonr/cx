@@ -30,6 +30,8 @@ status(not_found) -> 404;
 status(no_session) -> 404;
 status(method_not_allowed) -> 405;
 status(already_exists) -> 409;
+status(in_use) -> 409;
+status(profile_missing) -> 409;
 status(not_cancellable) -> 409;
 status(expired) -> 409;
 status(already_started) -> 409;

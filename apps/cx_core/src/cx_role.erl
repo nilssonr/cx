@@ -40,19 +40,32 @@ update(Ctx = #auth_ctx{tenant_id = T}, RoleId, Params) ->
         {ok, to_map(Rec)}
     end.
 
+%% Deleting a role users reference is blocked (409) — a dangling role id
+%% would silently drop permissions at next token resolution.
 delete(Ctx = #auth_ctx{tenant_id = T}, RoleId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"roles:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_role, {T, RoleId}) of
-                    [_] -> mnesia:delete({cx_role, {T, RoleId}});
-                    [] -> {error, not_found}
+                    [] ->
+                        {error, not_found};
+                    [_] ->
+                        case referenced(T, RoleId) of
+                            true -> {error, in_use};
+                            false -> mnesia:delete({cx_role, {T, RoleId}})
+                        end
                 end
             end),
         publish(T, RoleId, role_deleted),
         ok
     end.
+
+referenced(T, RoleId) ->
+    lists:any(
+        fun(#cx_user{role_ids = RoleIds}) -> lists:member(RoleId, RoleIds) end,
+        mnesia:match_object(cx_patterns:users(T))
+    ).
 
 -spec fetch(binary(), binary()) -> {ok, #cx_role{}} | {error, not_found}.
 fetch(TenantId, RoleId) ->

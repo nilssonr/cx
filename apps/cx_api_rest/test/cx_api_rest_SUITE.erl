@@ -151,7 +151,7 @@ admin_crud_roundtrip(Config) ->
                 <<"permissions">> => [<<"agent:session:self">>]
             }
         ),
-    {200, #{<<"id">> := _UserId}} =
+    {200, #{<<"id">> := UserId, <<"skills">> := SkillsOut}} =
         req(
             Config,
             post,
@@ -162,10 +162,11 @@ admin_crud_roundtrip(Config) ->
                 <<"email">> => <<"r@x.dev">>,
                 <<"subject">> => <<"crud-agent">>,
                 <<"role_ids">> => [RoleId],
-                <<"skills">> => #{SkillId => 2},
+                <<"skills">> => [#{<<"skill_id">> => SkillId, <<"rank">> => 2}],
                 <<"routing_profile_id">> => ProfileId
             }
         ),
+    [#{<<"skill_id">> := SkillId, <<"rank">> := 2}] = SkillsOut,
     {422, #{<<"error">> := <<"invalid:levels">>}} =
         req(
             Config,
@@ -177,6 +178,36 @@ admin_crud_roundtrip(Config) ->
                 <<"levels">> => [#{<<"rank">> => 0, <<"name">> => <<"x">>}]
             }
         ),
+    %% referential integrity over the wire: unknown skill on a user is
+    %% 422; deleting a referenced skill/profile/role is 409
+    {422, #{<<"error">> := <<"invalid:skills">>}} =
+        req(
+            Config,
+            post,
+            Base ++ "/users",
+            Admin,
+            #{
+                <<"name">> => <<"G">>,
+                <<"email">> => <<"g@x">>,
+                <<"skills">> => [#{<<"skill_id">> => <<"ghost">>, <<"rank">> => 1}]
+            }
+        ),
+    {409, #{<<"error">> := <<"in_use">>}} =
+        req(Config, delete, Base ++ "/skills/" ++ binary_to_list(SkillId), Admin),
+    {409, #{<<"error">> := <<"in_use">>}} =
+        req(
+            Config,
+            delete,
+            Base ++ "/routing-profiles/" ++ binary_to_list(ProfileId),
+            Admin
+        ),
+    {409, #{<<"error">> := <<"in_use">>}} =
+        req(Config, delete, Base ++ "/roles/" ++ binary_to_list(RoleId), Admin),
+    %% dropping the user is not enough — the queue's skill_reqs still
+    %% hold the skill, so it stays blocked
+    {204, _} = req(Config, delete, Base ++ "/users/" ++ binary_to_list(UserId), Admin),
+    {409, #{<<"error">> := <<"in_use">>}} =
+        req(Config, delete, Base ++ "/skills/" ++ binary_to_list(SkillId), Admin),
     {404, _} = req(Config, delete, Base ++ "/not-ready-reasons/x", Admin),
     ok.
 

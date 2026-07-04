@@ -27,7 +27,7 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
             created_at = Now,
             updated_at = Now
         },
-        ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
+        ok ?= write_checked(T, Rec),
         publish(T, element(2, Rec#cx_user.key), user_created),
         {ok, to_map(Rec)}
     end.
@@ -78,7 +78,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, UserId, Params) ->
             status = Status,
             updated_at = cx_time:now_ms()
         },
-        ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
+        ok ?= write_checked(T, Rec),
         publish(T, UserId, user_updated),
         {ok, to_map(Rec)}
     end.
@@ -131,12 +131,20 @@ to_map(#cx_user{
         <<"name">> => Name,
         <<"email">> => Email,
         <<"role_ids">> => RoleIds,
-        <<"skills">> => Skills,
+        <<"skills">> => skills_to_list(Skills),
         <<"routing_profile_id">> => null_if_undefined(ProfileId),
         <<"status">> => atom_to_binary(Status),
         <<"created_at">> => C,
         <<"updated_at">> => U
     }.
+
+%% Wire shape is a list of objects so per-assignment fields can be added
+%% later without breaking the API; storage stays #{SkillId => Rank}.
+skills_to_list(Skills) ->
+    [
+        #{<<"skill_id">> => SkillId, <<"rank">> => Rank}
+     || {SkillId, Rank} <- lists:keysort(1, maps:to_list(Skills))
+    ].
 
 null_if_undefined(undefined) -> null;
 null_if_undefined(V) -> V.
@@ -155,22 +163,71 @@ opt_bin_list(Params, Key, Default) ->
             Error
     end.
 
+%% [{"skill_id": Id, "rank": N}, ...] -> #{Id => N}. Duplicate skill_ids
+%% are rejected rather than last-write-wins.
 opt_skills(Params) ->
     opt_skills(Params, #{}).
 
 opt_skills(Params, Default) ->
-    case cx_params:opt_map(Params, <<"skills">>, Default) of
-        {ok, Skills} ->
-            Valid = lists:all(
-                fun({K, V}) -> is_binary(K) andalso is_integer(V) andalso V > 0 end,
-                maps:to_list(Skills)
-            ),
-            case Valid of
-                true -> {ok, Skills};
-                false -> {error, {invalid, <<"skills">>}}
-            end;
-        Error ->
-            Error
+    case Params of
+        #{<<"skills">> := Raw} -> parse_skills(Raw);
+        _ -> {ok, Default}
+    end.
+
+parse_skills(Raw) when is_list(Raw) ->
+    try
+        Pairs = lists:map(
+            fun(M) when is_map(M) ->
+                SkillId = maps:get(<<"skill_id">>, M),
+                Rank = maps:get(<<"rank">>, M),
+                true = is_binary(SkillId) andalso SkillId =/= <<>>,
+                true = is_integer(Rank) andalso Rank > 0,
+                {SkillId, Rank}
+            end,
+            Raw
+        ),
+        Skills = maps:from_list(Pairs),
+        true = map_size(Skills) =:= length(Pairs),
+        {ok, Skills}
+    catch
+        _:_ -> {error, {invalid, <<"skills">>}}
+    end;
+parse_skills(_) ->
+    {error, {invalid, <<"skills">>}}.
+
+%% Write inside one transaction with the referential checks, so a
+%% concurrent skill/role/profile delete cannot race a dangling reference
+%% into existence.
+write_checked(T, Rec) ->
+    cx_store:tx(fun() ->
+        maybe
+            ok ?=
+                check_refs(
+                    cx_skill,
+                    T,
+                    maps:keys(Rec#cx_user.skills),
+                    <<"skills">>
+                ),
+            ok ?= check_refs(cx_role, T, Rec#cx_user.role_ids, <<"role_ids">>),
+            ok ?=
+                check_refs(
+                    cx_routing_profile,
+                    T,
+                    profile_refs(Rec#cx_user.routing_profile_id),
+                    <<"routing_profile_id">>
+                ),
+            mnesia:write(Rec)
+        end
+    end).
+
+profile_refs(undefined) -> [];
+profile_refs(ProfileId) -> [ProfileId].
+
+check_refs(Tab, T, Ids, Field) ->
+    Missing = [Id || Id <- Ids, mnesia:read(Tab, {T, Id}) =:= []],
+    case Missing of
+        [] -> ok;
+        _ -> {error, {invalid, Field}}
     end.
 
 publish(TenantId, UserId, Type) ->

@@ -52,7 +52,8 @@ INT_ROLE=$(req "$BOSS_TOKEN" POST "$BASE/roles" \
     '{"name":"Integrator","permissions":["interactions:create","interactions:cancel","interactions:read"]}' | field id)
 req "$BOSS_TOKEN" POST "$BASE/users" \
     "{\"name\":\"Demo Agent\",\"email\":\"agent@demo\",\"subject\":\"demo-agent\",
-      \"role_ids\":[\"$AGENT_ROLE\"],\"skills\":{\"$SKILL\":2}}" >/dev/null
+      \"role_ids\":[\"$AGENT_ROLE\"],
+      \"skills\":[{\"skill_id\":\"$SKILL\",\"rank\":2}]}" >/dev/null
 req "$BOSS_TOKEN" POST "$BASE/users" \
     "{\"name\":\"Demo Integrator\",\"email\":\"int@demo\",\"subject\":\"demo-integrator\",
       \"role_ids\":[\"$INT_ROLE\"]}" >/dev/null

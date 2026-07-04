@@ -42,19 +42,40 @@ update(Ctx = #auth_ctx{tenant_id = T}, SkillId, Params) ->
         {ok, to_map(Rec)}
     end.
 
+%% Deleting a skill that users hold or queues require is blocked (409):
+%% cascading would silently rewrite routing behavior; the admin resolves
+%% the references deliberately. Checked inside the delete transaction.
 delete(Ctx = #auth_ctx{tenant_id = T}, SkillId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"skills:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_skill, {T, SkillId}) of
-                    [_] -> mnesia:delete({cx_skill, {T, SkillId}});
-                    [] -> {error, not_found}
+                    [] ->
+                        {error, not_found};
+                    [_] ->
+                        case referenced(T, SkillId) of
+                            true -> {error, in_use};
+                            false -> mnesia:delete({cx_skill, {T, SkillId}})
+                        end
                 end
             end),
         publish(T, SkillId, skill_deleted),
         ok
     end.
+
+referenced(T, SkillId) ->
+    UserHolds = lists:any(
+        fun(#cx_user{skills = Skills}) -> maps:is_key(SkillId, Skills) end,
+        mnesia:match_object(cx_patterns:users(T))
+    ),
+    UserHolds orelse
+        lists:any(
+            fun(#cx_queue{skill_reqs = Reqs}) ->
+                lists:keymember(SkillId, #skill_req.skill_id, Reqs)
+            end,
+            mnesia:match_object(cx_patterns:queues(T))
+        ).
 
 -spec fetch(binary(), binary()) -> {ok, #cx_skill{}} | {error, not_found}.
 fetch(TenantId, SkillId) ->
