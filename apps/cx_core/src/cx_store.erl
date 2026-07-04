@@ -7,7 +7,7 @@
 %% dynamic() returns push the checking to the callers' pattern matches
 %% instead of pretending Mnesia gives us typed records.
 
--export([tx/1, read/2, list/2]).
+-export([tx/1, read/2, list/2, dirty_list/2]).
 
 -spec tx(fun(() -> eqwalizer:dynamic())) -> eqwalizer:dynamic().
 tx(Fun) ->
