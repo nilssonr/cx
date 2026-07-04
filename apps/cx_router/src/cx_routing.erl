@@ -5,7 +5,7 @@
 %% return decisions, so the whole routing semantics is testable (and
 %% property-testable) without spawning anything.
 %%
-%% A snapshot is the map form of one #cx_agent_presence{} row:
+%% A snapshot is the map form of one #cx_agent_snapshot{} row:
 %%   #{agent_id, pid, ready, mix, wrapup_until, skills, profile, idle_since}
 %% The mix already includes reservations for pending offers.
 

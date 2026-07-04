@@ -353,7 +353,7 @@ offer_to_first([Snapshot | Rest], Item, Data) ->
         try
             gen_statem:call(AgentPid, {offer, Offer}, ?OFFER_CALL_TIMEOUT_MS)
         catch
-            exit:{noproc, _} -> stale_presence(Data#qd.tenant, AgentId, AgentPid);
+            exit:{noproc, _} -> stale_snapshot(Data#qd.tenant, AgentId, AgentPid);
             exit:_ -> {error, not_routable}
         end
     of
@@ -395,11 +395,11 @@ offer_to_first([Snapshot | Rest], Item, Data) ->
             offer_to_first(Rest, Item, Data)
     end.
 
-stale_presence(TenantId, AgentId, DeadPid) ->
+stale_snapshot(TenantId, AgentId, DeadPid) ->
     %% presence row points at a dead session (kill -9 etc.); clean it up
-    case mnesia:dirty_read(cx_agent_presence, {TenantId, AgentId}) of
-        [#cx_agent_presence{pid = DeadPid}] ->
-            mnesia:dirty_delete(cx_agent_presence, {TenantId, AgentId});
+    case mnesia:dirty_read(cx_agent_snapshot, {TenantId, AgentId}) of
+        [#cx_agent_snapshot{pid = DeadPid}] ->
+            mnesia:dirty_delete(cx_agent_snapshot, {TenantId, AgentId});
         _ ->
             ok
     end,
@@ -472,7 +472,7 @@ refresh_config(Data = #qd{tenant = TenantId, queue_id = QueueId}) ->
     end.
 
 agent_snapshots(TenantId) ->
-    Recs = mnesia:dirty_match_object(cx_patterns:presences(TenantId)),
+    Recs = mnesia:dirty_match_object(cx_patterns:agent_snapshots(TenantId)),
     [
         #{
             agent_id => AgentId,
@@ -484,7 +484,7 @@ agent_snapshots(TenantId) ->
             profile => Profile,
             idle_since => IdleSince
         }
-     || #cx_agent_presence{
+     || #cx_agent_snapshot{
             key = {_, AgentId},
             pid = Pid,
             ready = Ready,

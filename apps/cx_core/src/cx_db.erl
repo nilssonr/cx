@@ -81,7 +81,7 @@ table_specs() ->
             Disc,
             {index, [#cx_interaction.queue_key]}
         ]},
-        {cx_agent_presence, [
-            {attributes, record_info(fields, cx_agent_presence)}, {type, set}, Ram
+        {cx_agent_snapshot, [
+            {attributes, record_info(fields, cx_agent_snapshot)}, {type, set}, Ram
         ]}
     ].

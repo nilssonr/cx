@@ -115,7 +115,7 @@
 %% ram_copies cache of live agent-session state, written by the session on
 %% every transition. Routing reads it dirty; the offer call to the session
 %% is the authoritative check. Never treat this row as truth.
--record(cx_agent_presence, {
+-record(cx_agent_snapshot, {
     key :: {binary(), binary()},
     pid :: pid(),
     ready = #{} :: #{binary() => ready | {not_ready, binary() | undefined}},

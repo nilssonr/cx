@@ -51,7 +51,7 @@ init([TenantId, AgentId, Skills, Profile]) ->
         profile = Profile,
         idle_since = cx_time:now_ms()
     },
-    write_presence(Data),
+    write_snapshot(Data),
     publish(Data, undefined, undefined, session_started, #{}),
     {ok, online, Data}.
 
@@ -59,7 +59,7 @@ init([TenantId, AgentId, Skills, Profile]) ->
 
 handle_event({call, From}, {set_ready, Media, NewState}, _State, Data) ->
     Data1 = Data#sess{ready = maps:put(Media, NewState, Data#sess.ready)},
-    write_presence(Data1),
+    write_snapshot(Data1),
     publish(
         Data1,
         undefined,
@@ -96,7 +96,7 @@ handle_event({call, From}, {offer, Offer}, online, Data) ->
                 Data#sess.pending
             ),
             Data1 = Data#sess{pending = Pending},
-            write_presence(Data1),
+            write_snapshot(Data1),
             {keep_state, Data1, [{reply, From, ok}]};
         false ->
             {keep_state_and_data, [{reply, From, {error, not_routable}}]}
@@ -120,7 +120,7 @@ handle_event(cast, {offer_accepted, OfferId}, _State, Data) ->
                     Data#sess.active
                 )
             },
-            write_presence(Data1),
+            write_snapshot(Data1),
             {keep_state, Data1};
         error ->
             keep_state_and_data
@@ -130,7 +130,7 @@ handle_event(cast, {offer_withdrawn, OfferId}, _State, Data) ->
         {{_, _, _, _, MonRef}, Pending} ->
             erlang:demonitor(MonRef, [flush]),
             Data1 = touch_idle(Data#sess{pending = Pending}),
-            write_presence(Data1),
+            write_snapshot(Data1),
             %% a reservation was released — capacity may have opened up
             cx_router_signal:agent_available(Data1#sess.tenant),
             {keep_state, Data1};
@@ -160,7 +160,7 @@ handle_event({call, From}, {complete, IId}, State, Data) ->
                 true ->
                     Until = max(Data1#sess.wrapup_until, Now + WrapupMs),
                     Data2 = Data1#sess{wrapup_until = Until},
-                    write_presence(Data2),
+                    write_snapshot(Data2),
                     publish(
                         Data2,
                         QueueId,
@@ -176,7 +176,7 @@ handle_event({call, From}, {complete, IId}, State, Data) ->
                         {{timeout, wrapup}, Until - Now, expire}
                     ]};
                 false ->
-                    write_presence(Data1),
+                    write_snapshot(Data1),
                     cx_router_signal:agent_available(Data1#sess.tenant),
                     {next_state, State, Data1, [{reply, From, ok}]}
             end;
@@ -187,7 +187,7 @@ handle_event({call, From}, {extend_wrapup, Ms}, wrap_up, Data) ->
     Now = cx_time:now_ms(),
     Until = Data#sess.wrapup_until + Ms,
     Data1 = Data#sess{wrapup_until = Until},
-    write_presence(Data1),
+    write_snapshot(Data1),
     publish(
         Data1,
         undefined,
@@ -203,7 +203,7 @@ handle_event({call, From}, {extend_wrapup, _Ms}, online, _Data) ->
     {keep_state_and_data, [{reply, From, {error, not_in_wrapup}}]};
 handle_event({call, From}, cancel_wrapup, wrap_up, Data) ->
     Data1 = Data#sess{wrapup_until = 0},
-    write_presence(Data1),
+    write_snapshot(Data1),
     publish(
         Data1,
         undefined,
@@ -217,7 +217,7 @@ handle_event({call, From}, cancel_wrapup, online, _Data) ->
     {keep_state_and_data, [{reply, From, {error, not_in_wrapup}}]};
 handle_event({timeout, wrapup}, expire, wrap_up, Data) ->
     Data1 = Data#sess{wrapup_until = 0},
-    write_presence(Data1),
+    write_snapshot(Data1),
     publish(
         Data1,
         undefined,
@@ -269,7 +269,7 @@ handle_event(info, {'DOWN', MonRef, process, _Pid, _Reason}, _State, Data) ->
             keep_state_and_data;
         false ->
             Data1 = touch_idle(Data#sess{pending = Pending}),
-            write_presence(Data1),
+            write_snapshot(Data1),
             {keep_state, Data1}
     end;
 handle_event(_Type, _Event, _State, _Data) ->
@@ -278,7 +278,7 @@ handle_event(_Type, _Event, _State, _Data) ->
 terminate(_Reason, _State, Data) ->
     try
         mnesia:dirty_delete(
-            cx_agent_presence,
+            cx_agent_snapshot,
             {Data#sess.tenant, Data#sess.agent_id}
         )
     catch
@@ -299,8 +299,8 @@ touch_idle(Data = #sess{active = Active, pending = Pending}) ->
         _ -> Data
     end.
 
-write_presence(Data = #sess{tenant = Tenant, agent_id = AgentId}) ->
-    Rec = #cx_agent_presence{
+write_snapshot(Data = #sess{tenant = Tenant, agent_id = AgentId}) ->
+    Rec = #cx_agent_snapshot{
         key = {Tenant, AgentId},
         pid = self(),
         ready = Data#sess.ready,
