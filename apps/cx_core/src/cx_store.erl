@@ -32,3 +32,10 @@ read(Tab, Key) ->
 -spec list(atom(), tuple()) -> [eqwalizer:dynamic()].
 list(Tab, Pattern) ->
     tx(fun() -> mnesia:match_object(Tab, Pattern, read) end).
+
+%% Dirty variant for read paths that are hotter than admin CRUD (e.g.
+%% the presence directory) — no transaction, no locks, cache-grade
+%% consistency.
+-spec dirty_list(atom(), tuple()) -> [eqwalizer:dynamic()].
+dirty_list(Tab, Pattern) ->
+    mnesia:dirty_match_object(Tab, Pattern).

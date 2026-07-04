@@ -18,7 +18,9 @@
     routing_profiles/1,
     not_ready_reasons/1,
     open_queues/0,
-    agent_snapshots/1
+    agent_snapshots/1,
+    presence_decls/1,
+    presence_effs/1
 ]).
 
 tenants() -> #cx_tenant{_ = '_'}.
@@ -39,3 +41,7 @@ not_ready_reasons(TenantId) -> #cx_not_ready_reason{key = {TenantId, '_'}, _ = '
 open_queues() -> #cx_queue{status = open, _ = '_'}.
 
 agent_snapshots(TenantId) -> #cx_agent_snapshot{key = {TenantId, '_'}, _ = '_'}.
+
+presence_decls(TenantId) -> #cx_presence_decl{key = {TenantId, '_'}, _ = '_'}.
+
+presence_effs(TenantId) -> #cx_presence_eff{key = {TenantId, '_'}, _ = '_'}.

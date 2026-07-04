@@ -112,6 +112,36 @@
     completed_at :: integer() | undefined
 }).
 
+%% Durable DECLARED collaboration presence, written only by
+%% cx_presence:set_own. Row absence == fully automatic, no message.
+%% `until` (ms) expires manual_state AND message together; it is only
+%% ever COMPARED to now, never rewritten — so connectionless users
+%% expire lazily with no process (and no event fires at that moment;
+%% clients self-expire using the `until` in presence payloads).
+-record(cx_presence_decl, {
+    key :: {binary(), binary()},
+    %% one of cx_presence_state:all(); undefined = automatic
+    manual_state :: binary() | undefined,
+    message :: binary() | undefined,
+    until :: integer() | undefined,
+    updated_at :: integer()
+}).
+
+%% ram_copies cache of EFFECTIVE collaboration presence, written by a
+%% live cx_presence_session on every transition and deleted when it
+%% stops. Invariant: a row exists iff a session process owns it; read
+%% paths treat dead-pid rows as absent. Cache, never authoritative.
+-record(cx_presence_eff, {
+    key :: {binary(), binary()},
+    pid :: pid(),
+    %% one of cx_presence_state:all()
+    state :: binary(),
+    message :: binary() | undefined,
+    until :: integer() | undefined,
+    device_count = 0 :: non_neg_integer(),
+    updated_at :: integer()
+}).
+
 %% ram_copies cache of live agent-session state, written by the session on
 %% every transition. Routing reads it dirty; the offer call to the session
 %% is the authoritative check. Never treat this row as truth.

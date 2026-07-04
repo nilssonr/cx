@@ -52,7 +52,9 @@ init([TenantId, AgentId, Skills, Profile]) ->
         idle_since = cx_time:now_ms()
     },
     write_snapshot(Data),
-    publish(Data, undefined, undefined, session_started, #{}),
+    publish(Data, undefined, undefined, session_started, #{
+        <<"agent_id">> => AgentId
+    }),
     {ok, online, Data}.
 
 %% ---- readiness ----
@@ -66,6 +68,7 @@ handle_event({call, From}, {set_ready, Media, NewState}, _State, Data) ->
         Media,
         agent_ready_changed,
         #{
+            <<"agent_id">> => Data1#sess.agent_id,
             <<"media_type">> => Media,
             <<"state">> => ready_to_bin(NewState)
         }
@@ -253,7 +256,9 @@ handle_event({call, From}, stop_session, _State, Data) ->
                 end,
                 Data#sess.pending
             ),
-            publish(Data, undefined, undefined, session_ended, #{}),
+            publish(Data, undefined, undefined, session_ended, #{
+                <<"agent_id">> => Data#sess.agent_id
+            }),
             {stop_and_reply, normal, [{reply, From, ok}]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, has_active_interactions}}]}
