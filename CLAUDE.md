@@ -9,6 +9,7 @@ customer session; media types are tenant data, never a code enum.
 A change is done only when ALL of these pass:
 
     rebar3 compile                  # zero warnings in apps/ (deps excluded)
+    rebar3 fmt --check              # erlfmt clean (ELP does NOT format)
     rebar3 eunit                    # unit tests + PropEr properties
     rebar3 ct                       # router flows + REST e2e
     elp eqwalize-all                # must end with "NO ERRORS"
