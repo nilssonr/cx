@@ -1,0 +1,7 @@
+# ELP lint configuration (elp lint --read-config).
+#
+# W0051 "binary string can be written using sigil syntax" is disabled:
+# the codebase consistently uses <<"...">>; switching to ~"..." sigils is
+# a style decision, not a defect. If we ever adopt sigils, apply them
+# mechanically with: elp lint --diagnostic-filter W0051 --apply-fix
+disabled_lints = ["W0051"]
