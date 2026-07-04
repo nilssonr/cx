@@ -1,0 +1,16 @@
+{application, cx_router, [
+    {description, "cx routing engine: agent sessions, queues, offers"},
+    {vsn, "0.1.0"},
+    {registered, [cx_router_sup, cx_agent_session_sup, cx_queue_sup]},
+    {mod, {cx_router_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        cx_core,
+        cx_auth
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, []},
+    {links, []}
+]}.
