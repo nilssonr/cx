@@ -33,7 +33,34 @@ now.
 | `cx_core` | Domain model, Mnesia (`cx_db`), events (`cx_event`), registry (`cx_reg`) |
 | `cx_auth` | JWT validation against the issuer's JWKS, claims → tenant/permissions |
 | `cx_router` | Agent sessions, queue processes, offers — pure decision core in `cx_routing` |
-| `cx_api_rest` | Thin cowboy binding over the domain functions |
+| `cx_presence` | Collaboration presence — pure precedence core in `cx_presence_calc` |
+| `cx_api_rest` | Thin cowboy binding over the domain functions + the WebSocket push transport |
+
+## Presence
+
+Collaboration presence (who coworkers see) is SEPARATE from router
+readiness (whether the router may assign work) — separate controls,
+separate APIs. States are product concepts (`cx_presence_state`):
+online, away, busy, dnd, offline, out_of_office — plus a free-text
+message with an optional `until` expiry ("In Spain for two weeks").
+
+The engine stores *declarations* (durable), observes *connectivity*
+(live sockets — ephemeral, rebuilt from reality after any crash) and
+*computes* effective presence as a pure function; the answer is never
+stored, only cached. No devices connected → offline (message still
+shown); manual state wins; idle → away; else online.
+
+## The socket
+
+`/api/v1/socket` is the push channel for the agent app: the user's own
+router events (offers, wrap-up, session) plus tenant `presence_changed`
+fan-out — and it doubles as the presence engine's connectivity source.
+Auth is in-band (browsers can't set Authorization on a WebSocket):
+first frame `{"type":"auth","token":...}` within 10s, then
+`{"type":"ready",...}`. Client sends `{"type":"ping"}` (~25s) and
+throttled `{"type":"activity"}` on user input. Close codes: 4400
+protocol, 4401 auth, 4403 no agent identity, 4408 auth deadline, 4429
+slow consumer (reconnect + resync via REST).
 
 ## Build & test
 

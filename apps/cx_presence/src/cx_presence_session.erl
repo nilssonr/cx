@@ -68,7 +68,7 @@ handle_event({call, From}, {connected, ConnPid, DeviceInfo}, _S, Data) ->
         end,
     MonRef = erlang:monitor(process, ConnPid),
     Data1 = Data#pd{
-        conns = maps:put(ConnPid, {MonRef, DeviceInfo}, Conns1),
+        conns = Conns1#{ConnPid => {MonRef, DeviceInfo}},
         last_activity = cx_time:now_ms()
     },
     {Data2, Actions} = recompute(Data1),

@@ -5,7 +5,17 @@ See README.md for architecture. "Interaction" is the canonical term for a
 customer session; media types are hard-coded product concepts
 (cx_media:all/0 — voice, chat, sms, email, open_media, social_media),
 each backing a distinct agent-app UI. Customers never define them;
-integrator extensibility goes through open_media + properties.
+integrator extensibility goes through open_media + properties. The
+same charter covers presence states (cx_presence_state:all/0).
+
+Collaboration presence (cx_presence) is separate from router readiness
+and must stay uncoupled except through future explicit tenant policy
+(the seam is cx_presence_session:recompute/1). Presence stores
+declarations, observes connectivity, computes effective state — never
+store the computed answer, only cache it (cx_presence_eff, dead-pid
+rows are garbage). WebSocket auth is in-band first-frame (browsers
+cannot set Authorization on sockets); agent permission for presence is
+`presence:set:self`.
 
 ## Definition of done
 

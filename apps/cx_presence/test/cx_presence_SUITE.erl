@@ -316,6 +316,9 @@ wait_until(_Fun, 0) ->
     error(condition_never_true);
 wait_until(Fun, N) ->
     case Fun() of
-        true -> ok;
-        false -> timer:sleep(10), wait_until(Fun, N - 1)
+        true ->
+            ok;
+        false ->
+            timer:sleep(10),
+            wait_until(Fun, N - 1)
     end.

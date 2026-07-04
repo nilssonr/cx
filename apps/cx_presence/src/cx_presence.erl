@@ -58,17 +58,18 @@ get_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
 %% their coworkers) — the not-ready-reason-read precedent.
 directory(#auth_ctx{tenant_id = T}) ->
     Now = cx_time:now_ms(),
-    Users = [
-        U
-     || U = #cx_user{status = active} <- cx_store:dirty_list(cx_user, cx_patterns:users(T))
-    ],
     Effs = live_effs(T),
-    Decls = maps:from_list([
-        {UserId, R}
-     || R = #cx_presence_decl{key = {_, UserId}} <-
-            cx_store:dirty_list(cx_presence_decl, cx_patterns:presence_decls(T))
-    ]),
-    {ok, [directory_entry(U, Effs, Decls, Now) || U <- Users]}.
+    Decls = lists:foldl(
+        fun(R = #cx_presence_decl{key = {_, UserId}}, Acc) ->
+            Acc#{UserId => R}
+        end,
+        #{},
+        cx_store:dirty_list(cx_presence_decl, cx_patterns:presence_decls(T))
+    ),
+    {ok, [
+        directory_entry(U, Effs, Decls, Now)
+     || U = #cx_user{status = active} <- cx_store:dirty_list(cx_user, cx_patterns:users(T))
+    ]}.
 
 %% ---- transport-internal connectivity signals ----
 
@@ -234,7 +235,7 @@ effective_now(T, UserId, Row, Now) ->
                 true ->
                     {S, M, D};
                 false ->
-                    _ = catch mnesia:dirty_delete(cx_presence_eff, {T, UserId}),
+                    drop_stale_eff(T, UserId),
                     lazy_effective(Row, Now)
             end;
         [] ->
@@ -253,9 +254,9 @@ live_effs(T) ->
         fun(Row = #cx_presence_eff{key = {_, UserId}, pid = Pid}, Acc) ->
             case is_process_alive(Pid) of
                 true ->
-                    maps:put(UserId, Row, Acc);
+                    Acc#{UserId => Row};
                 false ->
-                    _ = catch mnesia:dirty_delete(cx_presence_eff, {T, UserId}),
+                    drop_stale_eff(T, UserId),
                     Acc
             end
         end,
@@ -286,6 +287,15 @@ directory_entry(#cx_user{key = {_, UserId}, name = Name}, Effs, Decls, Now) ->
         <<"message">> => undef_to_null(Message),
         <<"until">> => undef_to_null(Until)
     }.
+
+%% best-effort cleanup of an eff row whose owner died brutally
+drop_stale_eff(T, UserId) ->
+    try
+        mnesia:dirty_delete(cx_presence_eff, {T, UserId})
+    catch
+        _:_ -> ok
+    end,
+    ok.
 
 decl_updated_at(undefined) -> null;
 decl_updated_at(#cx_presence_decl{updated_at = At}) -> At.

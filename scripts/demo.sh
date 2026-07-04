@@ -47,7 +47,7 @@ echo "media=$MEDIA skill=$SKILL queue=$QUEUE"
 
 echo "== roles + users (agent and integrator)"
 AGENT_ROLE=$(req "$BOSS_TOKEN" POST "$BASE/roles" \
-    '{"name":"Agent","permissions":["agent:session:self","agent:ready:self","agent:offers:self","agent:wrapup:self"]}' | field id)
+    '{"name":"Agent","permissions":["agent:session:self","agent:ready:self","agent:offers:self","agent:wrapup:self","presence:set:self"]}' | field id)
 INT_ROLE=$(req "$BOSS_TOKEN" POST "$BASE/roles" \
     '{"name":"Integrator","permissions":["interactions:create","interactions:cancel","interactions:read"]}' | field id)
 req "$BOSS_TOKEN" POST "$BASE/users" \
@@ -107,6 +107,11 @@ done
 [ -n "$OFFER2" ] || { echo "no offer after wrap-up cancel"; exit 1; }
 req "$AGENT_TOKEN" POST "/api/v1/agent/offers/$OFFER2/accept"
 req "$AGENT_TOKEN" POST "/api/v1/agent/interactions/$IID2/complete"
+
+echo "== presence: busy + 'In Spain for two weeks', visible in the directory"
+req "$AGENT_TOKEN" PUT /api/v1/presence '{"state":"busy","message":"In Spain for two weeks"}' >/dev/null
+req "$AGENT_TOKEN" GET /api/v1/presence/directory \
+    | python3 -c 'import sys,json;print([e for e in json.load(sys.stdin) if e["message"]])'
 
 echo
 echo "demo complete: $IID and $IID2 routed, accepted, completed."

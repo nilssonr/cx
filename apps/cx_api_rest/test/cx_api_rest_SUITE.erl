@@ -14,7 +14,8 @@
     cross_tenant_forbidden/1,
     agent_open_media_flow/1,
     integrator_cancel_rules/1,
-    forbidden_without_permission/1
+    forbidden_without_permission/1,
+    presence_roundtrip/1
 ]).
 
 all() ->
@@ -25,7 +26,8 @@ all() ->
         cross_tenant_forbidden,
         agent_open_media_flow,
         integrator_cancel_rules,
-        forbidden_without_permission
+        forbidden_without_permission,
+        presence_roundtrip
     ].
 
 init_per_suite(Config) ->
@@ -66,6 +68,7 @@ unauthorized_paths(Config) ->
     {401, _} = req(Config, get, "/api/v1/tenants", none),
     {401, _} = req(Config, get, "/api/v1/tenants", <<"not-a-token">>),
     {401, _} = req(Config, post, "/api/v1/interactions", none, #{}),
+    {401, _} = req(Config, get, "/api/v1/presence", none),
     ok.
 
 admin_crud_roundtrip(Config) ->
@@ -420,6 +423,7 @@ forbidden_without_permission(Config) ->
         #{<<"queue_id">> => <<"q">>, <<"media_type">> => <<"m">>}
     ),
     {403, _} = req(Config, post, "/api/v1/agent/session", Nobody, #{}),
+    {403, _} = req(Config, put, "/api/v1/presence", Nobody, #{<<"state">> => <<"busy">>}),
     ok.
 
 %% ---- helpers ----
@@ -512,3 +516,30 @@ req(Config, Method, Path, Token, Body, _Opts) ->
             {error, _} -> RespBody
         end,
     {Status, Decoded}.
+
+presence_roundtrip(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := Tid}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"P">>}),
+    User = user_token(Config, Tid, <<"presence-user">>, [<<"presence:set:self">>]),
+    {200, #{
+        <<"state">> := <<"offline">>,
+        <<"manual_state">> := <<"busy">>,
+        <<"message">> := <<"In Spain for two weeks">>
+    }} =
+        req(Config, put, "/api/v1/presence", User, #{
+            <<"state">> => <<"busy">>,
+            <<"message">> => <<"In Spain for two weeks">>
+        }),
+    {200, #{<<"manual_state">> := <<"busy">>, <<"device_count">> := 0}} =
+        req(Config, get, "/api/v1/presence", User),
+    {422, #{<<"error">> := <<"invalid:state">>}} =
+        req(Config, put, "/api/v1/presence", User, #{<<"state">> => <<"invisible">>}),
+    {200, Entries} = req(Config, get, "/api/v1/presence/directory", User),
+    ?assert(
+        lists:any(
+            fun(#{<<"message">> := M}) -> M =:= <<"In Spain for two weeks">> end,
+            Entries
+        )
+    ),
+    ok.
