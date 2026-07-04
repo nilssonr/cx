@@ -1,0 +1,22 @@
+{application, cx_api_rest, [
+    {description, "cx REST API transport"},
+    {vsn, "0.1.0"},
+    {registered, [cx_api_rest_sup]},
+    {mod, {cx_api_rest_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        cowboy,
+        cx_core,
+        cx_auth,
+        cx_router
+    ]},
+    {env, [
+        {port, 8080},
+        {ip, {0, 0, 0, 0}},
+        {acceptors, 10}
+    ]},
+    {modules, []},
+    {licenses, []},
+    {links, []}
+]}.
