@@ -8,12 +8,18 @@ customer session; media types are tenant data, never a code enum.
 
 A change is done only when ALL of these pass:
 
-    rebar3 compile                  # zero warnings in apps/ (deps excluded)
-    rebar3 fmt --check              # erlfmt clean (ELP does NOT format)
-    rebar3 eunit                    # unit tests + PropEr properties
-    rebar3 ct                       # router flows + REST e2e
-    elp eqwalize-all                # must end with "NO ERRORS"
-    elp lint --read-config          # must report no diagnostics
+    rebar3 compile                       # zero warnings in apps/ (deps excluded)
+    rebar3 fmt --check                   # erlfmt clean (ELP does NOT format)
+    rebar3 eunit                         # unit tests + PropEr properties
+    rebar3 ct                            # router flows + REST e2e
+    elp eqwalize-all                     # must end with "NO ERRORS"
+    elp lint --diagnostic-ignore W0051   # must report no diagnostics
+
+W0051 (sigil string syntax) is ignored via the CLI flag, not a config
+file: the .elp_lint.toml schema differs between ELP builds in use
+(local vs CI), the flag works on both. It's a style non-decision — the
+codebase uses <<"...">>; adopting ~"..." sigils would be a deliberate
+sweep (elp lint --diagnostic-filter W0051 --apply-fix).
 
 Never mark work complete with a failing or skipped gate. If a gate cannot
 pass for a good reason, stop and say so instead of suppressing it.

@@ -113,4 +113,4 @@ jobs:
         run: elp eqwalize-all
 
       - name: ELP lint
-        run: elp lint --read-config
+        run: elp lint --diagnostic-ignore W0051
