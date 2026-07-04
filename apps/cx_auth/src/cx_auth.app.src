@@ -1,0 +1,20 @@
+{application, cx_auth, [
+    {description, "cx authentication (OIDC JWT validation) and authorization"},
+    {vsn, "0.1.0"},
+    {registered, [cx_auth_sup]},
+    {mod, {cx_auth_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        crypto,
+        public_key,
+        inets,
+        ssl,
+        jose,
+        cx_core
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, []},
+    {links, []}
+]}.
