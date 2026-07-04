@@ -10,6 +10,11 @@
 
 execute(Req, Env = #{handler := cx_h_health}) ->
     {ok, Req, Env};
+%% WebSocket handshakes cannot carry Authorization from browsers; the
+%% socket authenticates in-band (first frame) through the same cx_auth
+%% path — see cx_h_socket.
+execute(Req, Env = #{handler := cx_h_socket}) ->
+    {ok, Req, Env};
 execute(Req, Env = #{handler_opts := Opts}) ->
     Authorization = cowboy_req:header(<<"authorization">>, Req, <<>>),
     case cx_auth:authenticate(Authorization) of

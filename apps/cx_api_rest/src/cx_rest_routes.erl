@@ -11,6 +11,13 @@ routes() ->
     [
         {"/healthz", cx_h_health, #{}},
 
+        %% push transport — auth is in-band (first frame), see cx_h_socket
+        {"/api/v1/socket", cx_h_socket, #{}},
+
+        %% collaboration presence — identity from the token
+        {"/api/v1/presence/directory", cx_h_presence_directory, #{}},
+        {"/api/v1/presence", cx_h_presence, #{}},
+
         %% admin CRUD — one generic handler, parameterized by entity module
         {"/api/v1/tenants/:tid/users[/:id]", cx_h_crud, #{module => cx_user}},
         {"/api/v1/tenants/:tid/roles[/:id]", cx_h_crud, #{module => cx_role}},
