@@ -43,12 +43,13 @@ update(Ctx = #auth_ctx{tenant_id = T}, RoleId, Params) ->
 delete(Ctx = #auth_ctx{tenant_id = T}, RoleId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"roles:write">>),
-        ok ?= cx_store:tx(fun() ->
-            case mnesia:read(cx_role, {T, RoleId}) of
-                [_] -> mnesia:delete({cx_role, {T, RoleId}});
-                [] -> {error, not_found}
-            end
-        end),
+        ok ?=
+            cx_store:tx(fun() ->
+                case mnesia:read(cx_role, {T, RoleId}) of
+                    [_] -> mnesia:delete({cx_role, {T, RoleId}});
+                    [] -> {error, not_found}
+                end
+            end),
         publish(T, RoleId, role_deleted),
         ok
     end.
@@ -72,6 +73,13 @@ opt_perms(Params, Default) ->
     end.
 
 publish(TenantId, RoleId, Type) ->
-    cx_event:publish(TenantId, undefined, undefined,
-                     #{type => Type, at => cx_time:now_ms(),
-                       data => #{<<"id">> => RoleId}}).
+    cx_event:publish(
+        TenantId,
+        undefined,
+        undefined,
+        #{
+            type => Type,
+            at => cx_time:now_ms(),
+            data => #{<<"id">> => RoleId}
+        }
+    ).

@@ -17,4 +17,6 @@ boot() ->
     lists:foreach(
         fun(#cx_queue{key = {TenantId, QueueId}}) ->
             {ok, _} = cx_queue_proc:ensure_started(TenantId, QueueId)
-        end, Queues).
+        end,
+        Queues
+    ).

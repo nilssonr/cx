@@ -15,10 +15,18 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, Skills} ?= opt_skills(Params),
         {ok, ProfileId} ?= cx_params:opt_bin(Params, <<"routing_profile_id">>, undefined),
         Now = cx_time:now_ms(),
-        Rec = #cx_user{key = {T, cx_id:new()}, subject = Subject,
-                       name = Name, email = Email, role_ids = RoleIds,
-                       skills = Skills, routing_profile_id = ProfileId,
-                       status = active, created_at = Now, updated_at = Now},
+        Rec = #cx_user{
+            key = {T, cx_id:new()},
+            subject = Subject,
+            name = Name,
+            email = Email,
+            role_ids = RoleIds,
+            skills = Skills,
+            routing_profile_id = ProfileId,
+            status = active,
+            created_at = Now,
+            updated_at = Now
+        },
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, element(2, Rec#cx_user.key), user_created),
         {ok, to_map(Rec)}
@@ -47,14 +55,29 @@ update(Ctx = #auth_ctx{tenant_id = T}, UserId, Params) ->
         {ok, Subject} ?= cx_params:opt_bin(Params, <<"subject">>, Rec0#cx_user.subject),
         {ok, RoleIds} ?= opt_bin_list(Params, <<"role_ids">>, Rec0#cx_user.role_ids),
         {ok, Skills} ?= opt_skills(Params, Rec0#cx_user.skills),
-        {ok, ProfileId} ?= cx_params:opt_bin(Params, <<"routing_profile_id">>,
-                                             Rec0#cx_user.routing_profile_id),
-        {ok, Status} ?= cx_params:opt_atom(Params, <<"status">>,
-                                           [active, disabled], Rec0#cx_user.status),
-        Rec = Rec0#cx_user{subject = Subject, name = Name, email = Email,
-                           role_ids = RoleIds, skills = Skills,
-                           routing_profile_id = ProfileId, status = Status,
-                           updated_at = cx_time:now_ms()},
+        {ok, ProfileId} ?=
+            cx_params:opt_bin(
+                Params,
+                <<"routing_profile_id">>,
+                Rec0#cx_user.routing_profile_id
+            ),
+        {ok, Status} ?=
+            cx_params:opt_atom(
+                Params,
+                <<"status">>,
+                [active, disabled],
+                Rec0#cx_user.status
+            ),
+        Rec = Rec0#cx_user{
+            subject = Subject,
+            name = Name,
+            email = Email,
+            role_ids = RoleIds,
+            skills = Skills,
+            routing_profile_id = ProfileId,
+            status = Status,
+            updated_at = cx_time:now_ms()
+        },
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, UserId, user_updated),
         {ok, to_map(Rec)}
@@ -63,12 +86,13 @@ update(Ctx = #auth_ctx{tenant_id = T}, UserId, Params) ->
 delete(Ctx = #auth_ctx{tenant_id = T}, UserId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"users:write">>),
-        ok ?= cx_store:tx(fun() ->
-            case mnesia:read(cx_user, {T, UserId}) of
-                [_] -> mnesia:delete({cx_user, {T, UserId}});
-                [] -> {error, not_found}
-            end
-        end),
+        ok ?=
+            cx_store:tx(fun() ->
+                case mnesia:read(cx_user, {T, UserId}) of
+                    [_] -> mnesia:delete({cx_user, {T, UserId}});
+                    [] -> {error, not_found}
+                end
+            end),
         publish(T, UserId, user_deleted),
         ok
     end.
@@ -89,16 +113,30 @@ fetch_by_subject(TenantId, Subject) ->
         [] -> {error, not_found}
     end.
 
-to_map(#cx_user{key = {_, Id}, subject = Subject, name = Name, email = Email,
-                role_ids = RoleIds, skills = Skills,
-                routing_profile_id = ProfileId, status = Status,
-                created_at = C, updated_at = U}) ->
-    #{<<"id">> => Id, <<"subject">> => null_if_undefined(Subject),
-      <<"name">> => Name, <<"email">> => Email,
-      <<"role_ids">> => RoleIds, <<"skills">> => Skills,
-      <<"routing_profile_id">> => null_if_undefined(ProfileId),
-      <<"status">> => atom_to_binary(Status),
-      <<"created_at">> => C, <<"updated_at">> => U}.
+to_map(#cx_user{
+    key = {_, Id},
+    subject = Subject,
+    name = Name,
+    email = Email,
+    role_ids = RoleIds,
+    skills = Skills,
+    routing_profile_id = ProfileId,
+    status = Status,
+    created_at = C,
+    updated_at = U
+}) ->
+    #{
+        <<"id">> => Id,
+        <<"subject">> => null_if_undefined(Subject),
+        <<"name">> => Name,
+        <<"email">> => Email,
+        <<"role_ids">> => RoleIds,
+        <<"skills">> => Skills,
+        <<"routing_profile_id">> => null_if_undefined(ProfileId),
+        <<"status">> => atom_to_binary(Status),
+        <<"created_at">> => C,
+        <<"updated_at">> => U
+    }.
 
 null_if_undefined(undefined) -> null;
 null_if_undefined(V) -> V.
@@ -125,7 +163,8 @@ opt_skills(Params, Default) ->
         {ok, Skills} ->
             Valid = lists:all(
                 fun({K, V}) -> is_binary(K) andalso is_integer(V) andalso V > 0 end,
-                maps:to_list(Skills)),
+                maps:to_list(Skills)
+            ),
             case Valid of
                 true -> {ok, Skills};
                 false -> {error, {invalid, <<"skills">>}}
@@ -135,6 +174,13 @@ opt_skills(Params, Default) ->
     end.
 
 publish(TenantId, UserId, Type) ->
-    cx_event:publish(TenantId, undefined, undefined,
-                     #{type => Type, at => cx_time:now_ms(),
-                       data => #{<<"id">> => UserId}}).
+    cx_event:publish(
+        TenantId,
+        undefined,
+        undefined,
+        #{
+            type => Type,
+            at => cx_time:now_ms(),
+            data => #{<<"id">> => UserId}
+        }
+    ).

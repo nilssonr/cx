@@ -42,8 +42,11 @@ whereis_name(Name) ->
 -spec send(term(), term()) -> pid().
 send(Name, Msg) ->
     case whereis_name(Name) of
-        undefined -> exit({badarg, {Name, Msg}});
-        Pid -> Pid ! Msg, Pid
+        undefined ->
+            exit({badarg, {Name, Msg}});
+        Pid ->
+            Pid ! Msg,
+            Pid
     end.
 
 %% gen_server. State is #{MonitorRef => Name}.

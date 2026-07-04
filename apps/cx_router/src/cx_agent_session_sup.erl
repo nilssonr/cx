@@ -18,8 +18,10 @@ start_session(TenantId, AgentId, Skills, Profile) ->
 init([]) ->
     SupFlags = #{strategy => simple_one_for_one, intensity => 10, period => 10},
     ChildSpecs = [
-        #{id => cx_agent_session,
-          start => {cx_agent_session, start_link, []},
-          restart => temporary}
+        #{
+            id => cx_agent_session,
+            start => {cx_agent_session, start_link, []},
+            restart => temporary
+        }
     ],
     {ok, {SupFlags, ChildSpecs}}.

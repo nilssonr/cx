@@ -18,8 +18,10 @@ start_queue(TenantId, QueueId) ->
 init([]) ->
     SupFlags = #{strategy => simple_one_for_one, intensity => 10, period => 10},
     ChildSpecs = [
-        #{id => cx_queue_proc,
-          start => {cx_queue_proc, start_link, []},
-          restart => transient}
+        #{
+            id => cx_queue_proc,
+            start => {cx_queue_proc, start_link, []},
+            restart => transient
+        }
     ],
     {ok, {SupFlags, ChildSpecs}}.

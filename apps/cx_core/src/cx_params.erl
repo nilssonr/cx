@@ -13,7 +13,7 @@ require_bin(Params, Key) ->
     end.
 
 -spec opt_bin(map(), binary(), Default) ->
-          {ok, binary() | Default} | {error, {invalid, binary()}}.
+    {ok, binary() | Default} | {error, {invalid, binary()}}.
 opt_bin(Params, Key, Default) ->
     case Params of
         #{Key := V} when is_binary(V) -> {ok, V};
@@ -22,7 +22,7 @@ opt_bin(Params, Key, Default) ->
     end.
 
 -spec opt_int(map(), binary(), Default) ->
-          {ok, non_neg_integer() | Default} | {error, {invalid, binary()}}.
+    {ok, non_neg_integer() | Default} | {error, {invalid, binary()}}.
 opt_int(Params, Key, Default) ->
     case Params of
         #{Key := V} when is_integer(V), V >= 0 -> {ok, V};
@@ -35,7 +35,7 @@ opt_int(Params, Key, Default) ->
 %% ('open' | 'closed') through the filter — hence the comparison via
 %% binary_to_existing_atom instead of converting the candidates.
 -spec opt_atom(map(), binary(), [A], Default) ->
-          {ok, A | Default} | {error, {invalid, binary()}}.
+    {ok, A | Default} | {error, {invalid, binary()}}.
 opt_atom(Params, Key, Allowed, Default) ->
     case Params of
         #{Key := V} when is_binary(V) ->
@@ -55,7 +55,7 @@ opt_atom(Params, Key, Allowed, Default) ->
     end.
 
 -spec opt_map(map(), binary(), Default) ->
-          {ok, map() | Default} | {error, {invalid, binary()}}.
+    {ok, map() | Default} | {error, {invalid, binary()}}.
 opt_map(Params, Key, Default) ->
     case Params of
         #{Key := V} when is_map(V) -> {ok, V};
@@ -64,7 +64,7 @@ opt_map(Params, Key, Default) ->
     end.
 
 -spec opt_list(map(), binary(), Default) ->
-          {ok, list() | Default} | {error, {invalid, binary()}}.
+    {ok, list() | Default} | {error, {invalid, binary()}}.
 opt_list(Params, Key, Default) ->
     case Params of
         #{Key := V} when is_list(V) -> {ok, V};

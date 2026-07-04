@@ -20,18 +20,26 @@ new_keypair() ->
 token(#{jwk := JWK, kid := Kid}, Overrides) ->
     Issuer = application:get_env(cx_auth, issuer, <<"http://test-issuer">>),
     Audiences = application:get_env(cx_auth, audiences, [<<"cx-api">>]),
-    TenantClaim = application:get_env(cx_auth, tenant_claim,
-                                      <<"urn:zitadel:iam:org:id">>),
+    TenantClaim = application:get_env(
+        cx_auth,
+        tenant_claim,
+        <<"urn:zitadel:iam:org:id">>
+    ),
     Now = erlang:system_time(second),
-    Defaults = #{<<"iss">> => Issuer,
-                 <<"aud">> => hd(Audiences),
-                 <<"sub">> => <<"test-subject">>,
-                 <<"exp">> => Now + 3600,
-                 <<"iat">> => Now,
-                 TenantClaim => <<"test-tenant">>},
+    Defaults = #{
+        <<"iss">> => Issuer,
+        <<"aud">> => hd(Audiences),
+        <<"sub">> => <<"test-subject">>,
+        <<"exp">> => Now + 3600,
+        <<"iat">> => Now,
+        TenantClaim => <<"test-tenant">>
+    },
     Claims = maps:merge(Defaults, Overrides),
-    Signed = jose_jwt:sign(JWK, #{<<"alg">> => <<"EdDSA">>, <<"kid">> => Kid},
-                           Claims),
+    Signed = jose_jwt:sign(
+        JWK,
+        #{<<"alg">> => <<"EdDSA">>, <<"kid">> => Kid},
+        Claims
+    ),
     {_, Token} = jose_jws:compact(Signed),
     Token.
 
@@ -44,19 +52,38 @@ install(#{public_map := PublicMap}, Opts) ->
     ok = jose:json_module(cx_jose_json),
     %% persistent: a later application load must not reset these
     Persist = [{persistent, true}],
-    ok = application:set_env(cx_auth, issuer,
-                             maps:get(issuer, Opts, <<"http://test-issuer">>),
-                             Persist),
-    ok = application:set_env(cx_auth, audiences,
-                             maps:get(audiences, Opts, [<<"cx-api">>]),
-                             Persist),
-    ok = application:set_env(cx_auth, key_source, {static, [PublicMap]},
-                             Persist),
-    ok = application:set_env(cx_auth, tenant_claim,
-                             maps:get(tenant_claim, Opts,
-                                      <<"urn:zitadel:iam:org:id">>),
-                             Persist),
-    ok = application:set_env(cx_auth, platform_admin_subjects,
-                             maps:get(platform_admin_subjects, Opts, []),
-                             Persist),
+    ok = application:set_env(
+        cx_auth,
+        issuer,
+        maps:get(issuer, Opts, <<"http://test-issuer">>),
+        Persist
+    ),
+    ok = application:set_env(
+        cx_auth,
+        audiences,
+        maps:get(audiences, Opts, [<<"cx-api">>]),
+        Persist
+    ),
+    ok = application:set_env(
+        cx_auth,
+        key_source,
+        {static, [PublicMap]},
+        Persist
+    ),
+    ok = application:set_env(
+        cx_auth,
+        tenant_claim,
+        maps:get(
+            tenant_claim,
+            Opts,
+            <<"urn:zitadel:iam:org:id">>
+        ),
+        Persist
+    ),
+    ok = application:set_env(
+        cx_auth,
+        platform_admin_subjects,
+        maps:get(platform_admin_subjects, Opts, []),
+        Persist
+    ),
     ok.

@@ -16,8 +16,12 @@ reply(ok, Req) ->
 reply({ok, Data}, Req) ->
     cowboy_req:reply(200, ?JSON, cx_json:encode(Data), Req);
 reply({error, Error}, Req) ->
-    cowboy_req:reply(status(Error), ?JSON,
-                     cx_json:encode(#{<<"error">> => error_bin(Error)}), Req).
+    cowboy_req:reply(
+        status(Error),
+        ?JSON,
+        cx_json:encode(#{<<"error">> => error_bin(Error)}),
+        Req
+    ).
 
 status(unauthorized) -> 401;
 status(forbidden) -> 403;
@@ -48,7 +52,7 @@ error_bin(_) ->
 
 %% Read + decode a JSON object body. Returns {Result, Req}.
 -spec with_body(cowboy_req:req(), fun((map()) -> term())) ->
-          {term(), cowboy_req:req()}.
+    {term(), cowboy_req:req()}.
 with_body(Req0, Fun) ->
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
     case cx_json:decode(Body) of
@@ -60,7 +64,7 @@ with_body(Req0, Fun) ->
 %% case; operating on another requires tenants:admin, and the ctx is
 %% rescoped to the path tenant so every downstream key is built from it.
 -spec scope_tenant(#auth_ctx{}, binary()) ->
-          {ok, #auth_ctx{}} | {error, forbidden}.
+    {ok, #auth_ctx{}} | {error, forbidden}.
 scope_tenant(Ctx = #auth_ctx{tenant_id = Tid}, Tid) ->
     {ok, Ctx};
 scope_tenant(Ctx, Tid) ->

@@ -59,26 +59,28 @@ table_specs() ->
     Disc = {disc_copies, [node()]},
     Ram = {ram_copies, [node()]},
     [
-        {cx_tenant,
-         [{attributes, record_info(fields, cx_tenant)}, {type, set}, Disc]},
-        {cx_user,
-         [{attributes, record_info(fields, cx_user)}, {type, set}, Disc,
-          {index, [#cx_user.subject]}]},
-        {cx_role,
-         [{attributes, record_info(fields, cx_role)}, {type, set}, Disc]},
-        {cx_skill,
-         [{attributes, record_info(fields, cx_skill)}, {type, set}, Disc]},
-        {cx_media_type,
-         [{attributes, record_info(fields, cx_media_type)}, {type, set}, Disc]},
-        {cx_queue,
-         [{attributes, record_info(fields, cx_queue)}, {type, set}, Disc]},
-        {cx_routing_profile,
-         [{attributes, record_info(fields, cx_routing_profile)}, {type, set}, Disc]},
-        {cx_nr_reason,
-         [{attributes, record_info(fields, cx_nr_reason)}, {type, set}, Disc]},
-        {cx_interaction,
-         [{attributes, record_info(fields, cx_interaction)}, {type, set}, Disc,
-          {index, [#cx_interaction.queue_key]}]},
-        {cx_agent_presence,
-         [{attributes, record_info(fields, cx_agent_presence)}, {type, set}, Ram]}
+        {cx_tenant, [{attributes, record_info(fields, cx_tenant)}, {type, set}, Disc]},
+        {cx_user, [
+            {attributes, record_info(fields, cx_user)},
+            {type, set},
+            Disc,
+            {index, [#cx_user.subject]}
+        ]},
+        {cx_role, [{attributes, record_info(fields, cx_role)}, {type, set}, Disc]},
+        {cx_skill, [{attributes, record_info(fields, cx_skill)}, {type, set}, Disc]},
+        {cx_media_type, [{attributes, record_info(fields, cx_media_type)}, {type, set}, Disc]},
+        {cx_queue, [{attributes, record_info(fields, cx_queue)}, {type, set}, Disc]},
+        {cx_routing_profile, [
+            {attributes, record_info(fields, cx_routing_profile)}, {type, set}, Disc
+        ]},
+        {cx_nr_reason, [{attributes, record_info(fields, cx_nr_reason)}, {type, set}, Disc]},
+        {cx_interaction, [
+            {attributes, record_info(fields, cx_interaction)},
+            {type, set},
+            Disc,
+            {index, [#cx_interaction.queue_key]}
+        ]},
+        {cx_agent_presence, [
+            {attributes, record_info(fields, cx_agent_presence)}, {type, set}, Ram
+        ]}
     ].

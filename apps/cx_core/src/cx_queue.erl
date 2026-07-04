@@ -13,11 +13,14 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, WrapupMs} ?= cx_params:opt_int(Params, <<"wrapup_duration_ms">>, 30000),
         {ok, OfferMs} ?= cx_params:opt_int(Params, <<"offer_timeout_ms">>, 30000),
         {ok, Status} ?= cx_params:opt_atom(Params, <<"status">>, [open, closed], open),
-        Rec = #cx_queue{key = {T, cx_id:new()}, name = Name,
-                        skill_reqs = SkillReqs,
-                        wrapup_duration_ms = WrapupMs,
-                        offer_timeout_ms = OfferMs,
-                        status = Status},
+        Rec = #cx_queue{
+            key = {T, cx_id:new()},
+            name = Name,
+            skill_reqs = SkillReqs,
+            wrapup_duration_ms = WrapupMs,
+            offer_timeout_ms = OfferMs,
+            status = Status
+        },
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, element(2, Rec#cx_queue.key), queue_created),
         {ok, to_map(Rec)}
@@ -42,19 +45,37 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
         {ok, Rec0} ?= cx_store:read(cx_queue, {T, QueueId}),
         {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_queue.name),
-        {ok, SkillReqs} ?= case Params of
-            #{<<"skill_reqs">> := Raw} -> parse_skill_reqs(Raw);
-            _ -> {ok, Rec0#cx_queue.skill_reqs}
-        end,
-        {ok, WrapupMs} ?= cx_params:opt_int(Params, <<"wrapup_duration_ms">>,
-                                            Rec0#cx_queue.wrapup_duration_ms),
-        {ok, OfferMs} ?= cx_params:opt_int(Params, <<"offer_timeout_ms">>,
-                                           Rec0#cx_queue.offer_timeout_ms),
-        {ok, Status} ?= cx_params:opt_atom(Params, <<"status">>, [open, closed],
-                                           Rec0#cx_queue.status),
-        Rec = Rec0#cx_queue{name = Name, skill_reqs = SkillReqs,
-                            wrapup_duration_ms = WrapupMs,
-                            offer_timeout_ms = OfferMs, status = Status},
+        {ok, SkillReqs} ?=
+            case Params of
+                #{<<"skill_reqs">> := Raw} -> parse_skill_reqs(Raw);
+                _ -> {ok, Rec0#cx_queue.skill_reqs}
+            end,
+        {ok, WrapupMs} ?=
+            cx_params:opt_int(
+                Params,
+                <<"wrapup_duration_ms">>,
+                Rec0#cx_queue.wrapup_duration_ms
+            ),
+        {ok, OfferMs} ?=
+            cx_params:opt_int(
+                Params,
+                <<"offer_timeout_ms">>,
+                Rec0#cx_queue.offer_timeout_ms
+            ),
+        {ok, Status} ?=
+            cx_params:opt_atom(
+                Params,
+                <<"status">>,
+                [open, closed],
+                Rec0#cx_queue.status
+            ),
+        Rec = Rec0#cx_queue{
+            name = Name,
+            skill_reqs = SkillReqs,
+            wrapup_duration_ms = WrapupMs,
+            offer_timeout_ms = OfferMs,
+            status = Status
+        },
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, QueueId, queue_updated),
         {ok, to_map(Rec)}
@@ -63,12 +84,13 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
 delete(Ctx = #auth_ctx{tenant_id = T}, QueueId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
-        ok ?= cx_store:tx(fun() ->
-            case mnesia:read(cx_queue, {T, QueueId}) of
-                [_] -> mnesia:delete({cx_queue, {T, QueueId}});
-                [] -> {error, not_found}
-            end
-        end),
+        ok ?=
+            cx_store:tx(fun() ->
+                case mnesia:read(cx_queue, {T, QueueId}) of
+                    [_] -> mnesia:delete({cx_queue, {T, QueueId}});
+                    [] -> {error, not_found}
+                end
+            end),
         publish(T, QueueId, queue_deleted),
         ok
     end.
@@ -77,20 +99,36 @@ delete(Ctx = #auth_ctx{tenant_id = T}, QueueId) ->
 fetch(TenantId, QueueId) ->
     cx_store:read(cx_queue, {TenantId, QueueId}).
 
-to_map(#cx_queue{key = {_, Id}, name = Name, skill_reqs = SkillReqs,
-                 wrapup_duration_ms = WrapupMs, offer_timeout_ms = OfferMs,
-                 status = Status}) ->
-    #{<<"id">> => Id, <<"name">> => Name,
-      <<"skill_reqs">> => [skill_req_to_map(R) || R <- SkillReqs],
-      <<"wrapup_duration_ms">> => WrapupMs,
-      <<"offer_timeout_ms">> => OfferMs,
-      <<"status">> => atom_to_binary(Status)}.
+to_map(#cx_queue{
+    key = {_, Id},
+    name = Name,
+    skill_reqs = SkillReqs,
+    wrapup_duration_ms = WrapupMs,
+    offer_timeout_ms = OfferMs,
+    status = Status
+}) ->
+    #{
+        <<"id">> => Id,
+        <<"name">> => Name,
+        <<"skill_reqs">> => [skill_req_to_map(R) || R <- SkillReqs],
+        <<"wrapup_duration_ms">> => WrapupMs,
+        <<"offer_timeout_ms">> => OfferMs,
+        <<"status">> => atom_to_binary(Status)
+    }.
 
-skill_req_to_map(#skill_req{skill_id = SkillId, min_rank = MinRank,
-                            widening = Widening}) ->
-    #{<<"skill_id">> => SkillId, <<"min_rank">> => MinRank,
-      <<"widening">> => [#{<<"after_ms">> => A, <<"min_rank">> => R}
-                         || {A, R} <- Widening]}.
+skill_req_to_map(#skill_req{
+    skill_id = SkillId,
+    min_rank = MinRank,
+    widening = Widening
+}) ->
+    #{
+        <<"skill_id">> => SkillId,
+        <<"min_rank">> => MinRank,
+        <<"widening">> => [
+            #{<<"after_ms">> => A, <<"min_rank">> => R}
+         || {A, R} <- Widening
+        ]
+    }.
 
 %% [{"skill_id": "...", "min_rank": 2,
 %%   "widening": [{"after_ms": 60000, "min_rank": 1}]}]
@@ -100,24 +138,33 @@ skill_req_to_map(#skill_req{skill_id = SkillId, min_rank = MinRank,
 %% monotonically with wait time.
 parse_skill_reqs(Raw) when is_list(Raw) ->
     try
-        Reqs = lists:map(fun(M) when is_map(M) ->
-            SkillId = maps:get(<<"skill_id">>, M),
-            MinRank = maps:get(<<"min_rank">>, M),
-            true = is_binary(SkillId) andalso SkillId =/= <<>>,
-            true = is_integer(MinRank) andalso MinRank > 0,
-            Widening = lists:map(fun(W) ->
-                A = maps:get(<<"after_ms">>, W),
-                R = maps:get(<<"min_rank">>, W),
-                true = is_integer(A) andalso A > 0,
-                true = is_integer(R) andalso R > 0,
-                {A, R}
-            end, maps:get(<<"widening">>, M, [])),
-            Sorted = lists:keysort(1, Widening),
-            Ranks = [MinRank | [R || {_, R} <- Sorted]],
-            true = Ranks =:= lists:reverse(lists:sort(Ranks)),
-            #skill_req{skill_id = SkillId, min_rank = MinRank,
-                       widening = Sorted}
-        end, Raw),
+        Reqs = lists:map(
+            fun(M) when is_map(M) ->
+                SkillId = maps:get(<<"skill_id">>, M),
+                MinRank = maps:get(<<"min_rank">>, M),
+                true = is_binary(SkillId) andalso SkillId =/= <<>>,
+                true = is_integer(MinRank) andalso MinRank > 0,
+                Widening = lists:map(
+                    fun(W) ->
+                        A = maps:get(<<"after_ms">>, W),
+                        R = maps:get(<<"min_rank">>, W),
+                        true = is_integer(A) andalso A > 0,
+                        true = is_integer(R) andalso R > 0,
+                        {A, R}
+                    end,
+                    maps:get(<<"widening">>, M, [])
+                ),
+                Sorted = lists:keysort(1, Widening),
+                Ranks = [MinRank | [R || {_, R} <- Sorted]],
+                true = Ranks =:= lists:reverse(lists:sort(Ranks)),
+                #skill_req{
+                    skill_id = SkillId,
+                    min_rank = MinRank,
+                    widening = Sorted
+                }
+            end,
+            Raw
+        ),
         {ok, Reqs}
     catch
         _:_ -> {error, {invalid, <<"skill_reqs">>}}
@@ -126,6 +173,13 @@ parse_skill_reqs(_) ->
     {error, {invalid, <<"skill_reqs">>}}.
 
 publish(TenantId, QueueId, Type) ->
-    cx_event:publish(TenantId, QueueId, undefined,
-                     #{type => Type, at => cx_time:now_ms(),
-                       data => #{<<"id">> => QueueId}}).
+    cx_event:publish(
+        TenantId,
+        QueueId,
+        undefined,
+        #{
+            type => Type,
+            at => cx_time:now_ms(),
+            data => #{<<"id">> => QueueId}
+        }
+    ).

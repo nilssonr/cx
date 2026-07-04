@@ -11,9 +11,13 @@ profile() ->
     profile(unlimited, #{}, []).
 
 profile(MaxTotal, Caps, Guards) ->
-    #cx_routing_profile{key = {<<"t">>, <<"p">>}, name = <<"p">>,
-                        max_total = MaxTotal, media_caps = Caps,
-                        guards = Guards}.
+    #cx_routing_profile{
+        key = {<<"t">>, <<"p">>},
+        name = <<"p">>,
+        max_total = MaxTotal,
+        media_caps = Caps,
+        guards = Guards
+    }.
 
 empty_profile_blocks_nothing_test() ->
     Mix = #{?CHAT => 6, ?EMAIL => 3, ?VOICE => 2},
@@ -49,8 +53,11 @@ guard_threshold_test() ->
     ?assertNot(cx_routing:can_route(P, #{?EMAIL => 3}, ?CHAT)).
 
 effective_requirements_test() ->
-    Req = #skill_req{skill_id = <<"s1">>, min_rank = 3,
-                     widening = [{30000, 2}, {60000, 1}]},
+    Req = #skill_req{
+        skill_id = <<"s1">>,
+        min_rank = 3,
+        widening = [{30000, 2}, {60000, 1}]
+    },
     ?assertEqual([{<<"s1">>, 3}], cx_routing:effective_requirements([Req], 0)),
     ?assertEqual([{<<"s1">>, 3}], cx_routing:effective_requirements([Req], 29999)),
     ?assertEqual([{<<"s1">>, 2}], cx_routing:effective_requirements([Req], 30000)),
@@ -65,12 +72,19 @@ skill_match_test() ->
     ?assert(cx_routing:skill_match(Skills, [])).
 
 snapshot(Id, Overrides) ->
-    maps:merge(#{agent_id => Id, pid => self(),
-                 ready => #{?CHAT => ready},
-                 mix => #{}, wrapup_until => 0,
-                 skills => #{}, profile => profile(),
-                 idle_since => 0},
-               Overrides).
+    maps:merge(
+        #{
+            agent_id => Id,
+            pid => self(),
+            ready => #{?CHAT => ready},
+            mix => #{},
+            wrapup_until => 0,
+            skills => #{},
+            profile => profile(),
+            idle_since => 0
+        },
+        Overrides
+    ).
 
 routable_test() ->
     Now = 1000,
@@ -86,28 +100,40 @@ routable_test() ->
     WrapupOver = snapshot(<<"a">>, #{wrapup_until => Now}),
     ?assert(cx_routing:routable(WrapupOver, ?CHAT, Now)),
     %% profile denies
-    Full = snapshot(<<"a">>, #{profile => profile(1, #{}, []),
-                               mix => #{?CHAT => 1}}),
+    Full = snapshot(<<"a">>, #{
+        profile => profile(1, #{}, []),
+        mix => #{?CHAT => 1}
+    }),
     ?assertNot(cx_routing:routable(Full, ?CHAT, Now)).
 
 eligible_test() ->
     Reqs = [{<<"s1">>, 2}],
     A = snapshot(<<"a">>, #{skills => #{<<"s1">> => 3}}),
     B = snapshot(<<"b">>, #{skills => #{<<"s1">> => 1}}),
-    C = snapshot(<<"c">>, #{skills => #{<<"s1">> => 2},
-                            ready => #{?EMAIL => ready}}),
+    C = snapshot(<<"c">>, #{
+        skills => #{<<"s1">> => 2},
+        ready => #{?EMAIL => ready}
+    }),
     ?assertEqual([A], cx_routing:eligible(?CHAT, Reqs, [A, B, C], 0)).
 
 rank_test() ->
     Reqs = [{<<"s1">>, 1}],
     HighSkill = snapshot(<<"high">>, #{skills => #{<<"s1">> => 5}}),
-    LowSkillIdle = snapshot(<<"idle">>, #{skills => #{<<"s1">> => 2},
-                                          idle_since => 100}),
-    LowSkillBusy = snapshot(<<"busy">>, #{skills => #{<<"s1">> => 2},
-                                          mix => #{?CHAT => 2},
-                                          idle_since => 50}),
-    LowSkillFresh = snapshot(<<"fresh">>, #{skills => #{<<"s1">> => 2},
-                                            idle_since => 200}),
+    LowSkillIdle = snapshot(<<"idle">>, #{
+        skills => #{<<"s1">> => 2},
+        idle_since => 100
+    }),
+    LowSkillBusy = snapshot(<<"busy">>, #{
+        skills => #{<<"s1">> => 2},
+        mix => #{?CHAT => 2},
+        idle_since => 50
+    }),
+    LowSkillFresh = snapshot(<<"fresh">>, #{
+        skills => #{<<"s1">> => 2},
+        idle_since => 200
+    }),
     Ranked = cx_routing:rank(Reqs, [LowSkillBusy, LowSkillFresh, HighSkill, LowSkillIdle]),
-    ?assertEqual([<<"high">>, <<"idle">>, <<"fresh">>, <<"busy">>],
-                 [maps:get(agent_id, S) || S <- Ranked]).
+    ?assertEqual(
+        [<<"high">>, <<"idle">>, <<"fresh">>, <<"busy">>],
+        [maps:get(agent_id, S) || S <- Ranked]
+    ).

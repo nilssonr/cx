@@ -39,10 +39,13 @@ unsubscribe(TenantId, QueueId) ->
 publish(TenantId, QueueId, MediaTypeId, Event) ->
     Msg = {cx_event, {TenantId, QueueId, MediaTypeId, Event}},
     Tenant = pg:get_members(?SCOPE, {tenant, TenantId}),
-    Queue = case QueueId of
-        undefined -> [];
-        _ -> pg:get_members(?SCOPE, {queue, TenantId, QueueId})
-    end,
-    lists:foreach(fun(Pid) when is_pid(Pid) -> Pid ! Msg end,
-                  lists:usort(Tenant ++ Queue)),
+    Queue =
+        case QueueId of
+            undefined -> [];
+            _ -> pg:get_members(?SCOPE, {queue, TenantId, QueueId})
+        end,
+    lists:foreach(
+        fun(Pid) when is_pid(Pid) -> Pid ! Msg end,
+        lists:usort(Tenant ++ Queue)
+    ),
     ok.

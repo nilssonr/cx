@@ -41,12 +41,13 @@ update(Ctx = #auth_ctx{tenant_id = T}, ReasonId, Params) ->
 delete(Ctx = #auth_ctx{tenant_id = T}, ReasonId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"nr_reasons:write">>),
-        ok ?= cx_store:tx(fun() ->
-            case mnesia:read(cx_nr_reason, {T, ReasonId}) of
-                [_] -> mnesia:delete({cx_nr_reason, {T, ReasonId}});
-                [] -> {error, not_found}
-            end
-        end),
+        ok ?=
+            cx_store:tx(fun() ->
+                case mnesia:read(cx_nr_reason, {T, ReasonId}) of
+                    [_] -> mnesia:delete({cx_nr_reason, {T, ReasonId}});
+                    [] -> {error, not_found}
+                end
+            end),
         publish(T, ReasonId, nr_reason_deleted),
         ok
     end.
@@ -66,6 +67,13 @@ parse_active(Params, Default) ->
     end.
 
 publish(TenantId, ReasonId, Type) ->
-    cx_event:publish(TenantId, undefined, undefined,
-                     #{type => Type, at => cx_time:now_ms(),
-                       data => #{<<"id">> => ReasonId}}).
+    cx_event:publish(
+        TenantId,
+        undefined,
+        undefined,
+        #{
+            type => Type,
+            at => cx_time:now_ms(),
+            data => #{<<"id">> => ReasonId}
+        }
+    ).

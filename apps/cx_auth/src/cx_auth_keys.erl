@@ -10,8 +10,10 @@
 get_keys() ->
     case application:get_env(cx_auth, key_source) of
         {ok, {static, JWKMaps}} ->
-            [{maps:get(<<"kid">>, M, undefined), jose_jwk:from_map(M)}
-             || M <- JWKMaps];
+            [
+                {maps:get(<<"kid">>, M, undefined), jose_jwk:from_map(M)}
+             || M <- JWKMaps
+            ];
         {ok, {jwks, _Url}} ->
             cx_jwks_cache:get_keys();
         undefined ->

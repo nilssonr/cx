@@ -7,8 +7,13 @@
 -export([verify/1]).
 
 -define(LEEWAY_S, 30).
--define(ALLOWED_ALGS, [<<"RS256">>, <<"PS256">>, <<"ES256">>, <<"ES384">>,
-                       <<"EdDSA">>]).
+-define(ALLOWED_ALGS, [
+    <<"RS256">>,
+    <<"PS256">>,
+    <<"ES256">>,
+    <<"ES384">>,
+    <<"EdDSA">>
+]).
 
 -spec verify(binary()) -> {ok, map()} | {error, unauthorized}.
 verify(Token) ->

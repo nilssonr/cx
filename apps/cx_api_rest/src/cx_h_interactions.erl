@@ -8,8 +8,12 @@
 -export([init/2]).
 
 init(Req0, Opts = #{ctx := Ctx}) ->
-    {Result, Req1} = dispatch(cowboy_req:method(Req0),
-                              cowboy_req:binding(id, Req0), Ctx, Req0),
+    {Result, Req1} = dispatch(
+        cowboy_req:method(Req0),
+        cowboy_req:binding(id, Req0),
+        Ctx,
+        Req0
+    ),
     {ok, cx_h:reply(Result, Req1), Opts}.
 
 dispatch(<<"POST">>, undefined, Ctx, Req) ->

@@ -24,8 +24,14 @@ start_session(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
         {ok, User} ?= cx_user:fetch(T, UserId),
         ok ?= active_user(User),
         Profile = load_profile(T, User#cx_user.routing_profile_id),
-        case cx_agent_session_sup:start_session(T, UserId,
-                                                User#cx_user.skills, Profile) of
+        case
+            cx_agent_session_sup:start_session(
+                T,
+                UserId,
+                User#cx_user.skills,
+                Profile
+            )
+        of
             {ok, _Pid} -> {ok, #{<<"agent_id">> => UserId}};
             {error, {already_started, _}} -> {error, already_started}
         end
@@ -56,8 +62,10 @@ set_ready(Ctx = #auth_ctx{tenant_id = T}, MediaTypeId, ReadyState) ->
         call(Pid, {set_ready, MediaTypeId, ReadyState})
     end.
 
-validate_reason(_T, ready) -> ok;
-validate_reason(_T, {not_ready, undefined}) -> ok;
+validate_reason(_T, ready) ->
+    ok;
+validate_reason(_T, {not_ready, undefined}) ->
+    ok;
 validate_reason(T, {not_ready, ReasonId}) ->
     case cx_nr_reason:fetch(T, ReasonId) of
         {ok, #cx_nr_reason{active = true}} -> ok;
@@ -77,8 +85,7 @@ create_interaction(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         ok ?= open_queue(Queue),
         {ok, _} ?= cx_media_type:fetch(T, MediaTypeId),
         {ok, QPid} ?= cx_queue_proc:ensure_started(T, QueueId),
-        {ok, IId} ?= call(QPid, {enqueue, cx_id:new(), MediaTypeId, Props,
-                                 cx_time:now_ms()}),
+        {ok, IId} ?= call(QPid, {enqueue, cx_id:new(), MediaTypeId, Props, cx_time:now_ms()}),
         {ok, #{<<"id">> => IId}}
     end.
 
@@ -142,15 +149,19 @@ cancel_wrapup(Ctx) ->
 %% ---- helpers ----
 
 session_of(#auth_ctx{tenant_id = T, user_id = UserId}) ->
-    case UserId =/= undefined andalso
-         cx_reg:whereis_name({agent, T, UserId}) of
+    case
+        UserId =/= undefined andalso
+            cx_reg:whereis_name({agent, T, UserId})
+    of
         Pid when is_pid(Pid) -> {ok, Pid};
         _ -> {error, no_session}
     end.
 
 call(Pid, Msg) ->
-    try gen_statem:call(Pid, Msg, ?CALL_TIMEOUT)
-    catch exit:{noproc, _} -> {error, no_session}
+    try
+        gen_statem:call(Pid, Msg, ?CALL_TIMEOUT)
+    catch
+        exit:{noproc, _} -> {error, no_session}
     end.
 
 known_user(undefined) -> {error, no_user};
@@ -165,8 +176,7 @@ load_profile(_T, undefined) ->
 load_profile(T, ProfileId) ->
     case cx_routing_profile:fetch(T, ProfileId) of
         {ok, Profile} -> Profile;
-        {error, not_found} ->
-            #cx_routing_profile{key = {<<>>, <<>>}, name = <<"unlimited">>}
+        {error, not_found} -> #cx_routing_profile{key = {<<>>, <<>>}, name = <<"unlimited">>}
     end.
 
 open_queue(#cx_queue{status = open}) -> ok;
@@ -177,7 +187,8 @@ validate_properties(Params) ->
         {ok, Props} ->
             Valid = lists:all(
                 fun({K, V}) -> is_binary(K) andalso is_binary(V) end,
-                maps:to_list(Props)),
+                maps:to_list(Props)
+            ),
             case Valid of
                 true -> {ok, Props};
                 false -> {error, {invalid, <<"properties">>}}
@@ -186,20 +197,30 @@ validate_properties(Params) ->
             Error
     end.
 
-interaction_to_map(#cx_interaction{key = {_, Id}, queue_key = {_, QueueId},
-                                   media_type_id = Media, properties = Props,
-                                   state = State, agent_id = AgentId,
-                                   created_at = CreatedAt,
-                                   enqueued_at = EnqueuedAt,
-                                   accepted_at = AcceptedAt,
-                                   completed_at = CompletedAt}) ->
-    #{<<"id">> => Id, <<"queue_id">> => QueueId,
-      <<"media_type_id">> => Media, <<"properties">> => Props,
-      <<"state">> => atom_to_binary(State),
-      <<"agent_id">> => undef_to_null(AgentId),
-      <<"created_at">> => CreatedAt, <<"enqueued_at">> => EnqueuedAt,
-      <<"accepted_at">> => undef_to_null(AcceptedAt),
-      <<"completed_at">> => undef_to_null(CompletedAt)}.
+interaction_to_map(#cx_interaction{
+    key = {_, Id},
+    queue_key = {_, QueueId},
+    media_type_id = Media,
+    properties = Props,
+    state = State,
+    agent_id = AgentId,
+    created_at = CreatedAt,
+    enqueued_at = EnqueuedAt,
+    accepted_at = AcceptedAt,
+    completed_at = CompletedAt
+}) ->
+    #{
+        <<"id">> => Id,
+        <<"queue_id">> => QueueId,
+        <<"media_type_id">> => Media,
+        <<"properties">> => Props,
+        <<"state">> => atom_to_binary(State),
+        <<"agent_id">> => undef_to_null(AgentId),
+        <<"created_at">> => CreatedAt,
+        <<"enqueued_at">> => EnqueuedAt,
+        <<"accepted_at">> => undef_to_null(AcceptedAt),
+        <<"completed_at">> => undef_to_null(CompletedAt)
+    }.
 
 undef_to_null(undefined) -> null;
 undef_to_null(V) -> V.

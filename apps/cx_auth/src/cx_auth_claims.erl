@@ -14,8 +14,11 @@
 
 -spec to_ctx(map()) -> {ok, #auth_ctx{}} | {error, unauthorized}.
 to_ctx(Claims) ->
-    TenantClaim = application:get_env(cx_auth, tenant_claim,
-                                      <<"urn:zitadel:iam:org:id">>),
+    TenantClaim = application:get_env(
+        cx_auth,
+        tenant_claim,
+        <<"urn:zitadel:iam:org:id">>
+    ),
     TenantId = maps:get(TenantClaim, Claims, undefined),
     Subject = maps:get(<<"sub">>, Claims, undefined),
     case {TenantId, Subject} of
@@ -29,11 +32,13 @@ resolve(TenantId, Subject, Claims) ->
     PlatformAdmins = application:get_env(cx_auth, platform_admin_subjects, []),
     case lists:member(Subject, PlatformAdmins) of
         true ->
-            {ok, #auth_ctx{tenant_id = TenantId,
-                           user_id = undefined,
-                           subject = Subject,
-                           permissions = sets:from_list([<<"*">>]),
-                           claims = Claims}};
+            {ok, #auth_ctx{
+                tenant_id = TenantId,
+                user_id = undefined,
+                subject = Subject,
+                permissions = sets:from_list([<<"*">>]),
+                claims = Claims
+            }};
         false ->
             resolve_user(TenantId, Subject, Claims)
     end.
@@ -41,11 +46,13 @@ resolve(TenantId, Subject, Claims) ->
 resolve_user(TenantId, Subject, Claims) ->
     case cx_user:fetch_by_subject(TenantId, Subject) of
         {ok, #cx_user{key = {_, UserId}, status = active, role_ids = RoleIds}} ->
-            {ok, #auth_ctx{tenant_id = TenantId,
-                           user_id = UserId,
-                           subject = Subject,
-                           permissions = role_permissions(TenantId, RoleIds),
-                           claims = Claims}};
+            {ok, #auth_ctx{
+                tenant_id = TenantId,
+                user_id = UserId,
+                subject = Subject,
+                permissions = role_permissions(TenantId, RoleIds),
+                claims = Claims
+            }};
         {ok, #cx_user{}} ->
             %% disabled user
             {error, unauthorized};
@@ -60,5 +67,7 @@ role_permissions(TenantId, RoleIds) ->
                 {ok, #cx_role{permissions = Ps}} -> Ps;
                 {error, not_found} -> []
             end
-        end, RoleIds),
+        end,
+        RoleIds
+    ),
     sets:from_list(Perms).

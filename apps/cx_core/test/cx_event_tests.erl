@@ -3,17 +3,14 @@
 -include_lib("eunit/include/eunit.hrl").
 
 event_test_() ->
-    {setup,
-     fun cx_test_support:ensure_pg/0,
-     fun(_) -> ok end,
-     fun(_) ->
-         [
-          fun tenant_subscription/0,
-          fun queue_subscription/0,
-          fun dedup_across_groups/0,
-          fun tenant_isolation/0
-         ]
-     end}.
+    {setup, fun cx_test_support:ensure_pg/0, fun(_) -> ok end, fun(_) ->
+        [
+            fun tenant_subscription/0,
+            fun queue_subscription/0,
+            fun dedup_across_groups/0,
+            fun tenant_isolation/0
+        ]
+    end}.
 
 tenant_subscription() ->
     ok = cx_event:subscribe(<<"t1">>),
@@ -48,6 +45,7 @@ ev(Tag) ->
     #{type => test, at => 0, data => #{tag => Tag}}.
 
 recv() ->
-    receive {cx_event, Payload} -> Payload
+    receive
+        {cx_event, Payload} -> Payload
     after 200 -> timeout
     end.

@@ -17,7 +17,7 @@ tx(Fun) ->
     end.
 
 -spec read(atom(), term()) ->
-          {ok, eqwalizer:dynamic()} | {error, not_found}.
+    {ok, eqwalizer:dynamic()} | {error, not_found}.
 read(Tab, Key) ->
     tx(fun() ->
         case mnesia:read(Tab, Key) of

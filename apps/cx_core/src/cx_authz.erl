@@ -25,7 +25,9 @@ ctx(TenantId, Perms) ->
 
 -spec ctx(binary(), binary() | undefined, binary() | undefined, [binary()]) -> #auth_ctx{}.
 ctx(TenantId, UserId, Subject, Perms) ->
-    #auth_ctx{tenant_id = TenantId,
-              user_id = UserId,
-              subject = Subject,
-              permissions = sets:from_list(Perms)}.
+    #auth_ctx{
+        tenant_id = TenantId,
+        user_id = UserId,
+        subject = Subject,
+        permissions = sets:from_list(Perms)
+    }.

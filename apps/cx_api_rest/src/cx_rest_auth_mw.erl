@@ -16,9 +16,11 @@ execute(Req, Env = #{handler_opts := Opts}) ->
         {ok, Ctx} ->
             {ok, Req, Env#{handler_opts => Opts#{ctx => Ctx}}};
         {error, unauthorized} ->
-            Req1 = cowboy_req:reply(401,
+            Req1 = cowboy_req:reply(
+                401,
                 #{<<"content-type">> => <<"application/json">>},
                 cx_json:encode(#{<<"error">> => <<"unauthorized">>}),
-                Req),
+                Req
+            ),
             {stop, Req1}
     end.

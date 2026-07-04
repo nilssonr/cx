@@ -4,9 +4,13 @@
 
 format_test() ->
     Id = cx_id:new(),
-    ?assertMatch({match, _},
-                 re:run(Id, <<"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
-                              "[89ab][0-9a-f]{3}-[0-9a-f]{12}$">>)).
+    ?assertMatch(
+        {match, _},
+        re:run(Id, <<
+            "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+            "[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        >>)
+    ).
 
 uniqueness_test() ->
     Ids = [cx_id:new() || _ <- lists:seq(1, 1000)],

@@ -9,8 +9,18 @@
 
 -include("cx_core.hrl").
 
--export([tenants/0, users/1, roles/1, skills/1, media_types/1, queues/1,
-         routing_profiles/1, nr_reasons/1, open_queues/0, presences/1]).
+-export([
+    tenants/0,
+    users/1,
+    roles/1,
+    skills/1,
+    media_types/1,
+    queues/1,
+    routing_profiles/1,
+    nr_reasons/1,
+    open_queues/0,
+    presences/1
+]).
 
 tenants() -> #cx_tenant{_ = '_'}.
 

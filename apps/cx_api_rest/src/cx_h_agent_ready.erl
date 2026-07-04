@@ -7,19 +7,20 @@
 
 init(Req0, Opts = #{ctx := Ctx}) ->
     MediaId = cowboy_req:binding(media_id, Req0),
-    {Result, Req1} = case cowboy_req:method(Req0) of
-        <<"PUT">> ->
-            cx_h:with_body(Req0, fun(Params) ->
-                case parse_state(Params) of
-                    {ok, ReadyState} ->
-                        cx_router:set_ready(Ctx, MediaId, ReadyState);
-                    Error ->
-                        Error
-                end
-            end);
-        _ ->
-            {{error, method_not_allowed}, Req0}
-    end,
+    {Result, Req1} =
+        case cowboy_req:method(Req0) of
+            <<"PUT">> ->
+                cx_h:with_body(Req0, fun(Params) ->
+                    case parse_state(Params) of
+                        {ok, ReadyState} ->
+                            cx_router:set_ready(Ctx, MediaId, ReadyState);
+                        Error ->
+                            Error
+                    end
+                end);
+            _ ->
+                {{error, method_not_allowed}, Req0}
+        end,
     {ok, cx_h:reply(Result, Req1), Opts}.
 
 parse_state(#{<<"state">> := <<"ready">>}) ->

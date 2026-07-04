@@ -4,22 +4,22 @@
 
 reg_test_() ->
     {setup,
-     fun() ->
-         {ok, Pid} = cx_reg:start_link(),
-         Pid
-     end,
-     fun(Pid) ->
-         unlink(Pid),
-         exit(Pid, shutdown)
-     end,
-     fun(_) ->
-         [
-          fun register_whereis_unregister/0,
-          fun duplicate_name_refused/0,
-          fun cleanup_on_death/0,
-          fun via_tuple_works/0
-         ]
-     end}.
+        fun() ->
+            {ok, Pid} = cx_reg:start_link(),
+            Pid
+        end,
+        fun(Pid) ->
+            unlink(Pid),
+            exit(Pid, shutdown)
+        end,
+        fun(_) ->
+            [
+                fun register_whereis_unregister/0,
+                fun duplicate_name_refused/0,
+                fun cleanup_on_death/0,
+                fun via_tuple_works/0
+            ]
+        end}.
 
 register_whereis_unregister() ->
     Name = {agent, <<"t1">>, <<"u1">>},
@@ -62,13 +62,17 @@ via_tuple_works() ->
 
 spawn_idle() ->
     spawn(fun Loop() ->
-        receive stop -> ok; _ -> Loop() end
+        receive
+            stop -> ok;
+            _ -> Loop()
+        end
     end).
 
 stop_idle(Pid) ->
     MRef = erlang:monitor(process, Pid),
     Pid ! stop,
-    receive {'DOWN', MRef, process, Pid, _} -> ok
+    receive
+        {'DOWN', MRef, process, Pid, _} -> ok
     after 1000 -> error(worker_did_not_stop)
     end.
 
@@ -79,6 +83,9 @@ wait_until(_Fun, 0) ->
     error(condition_never_true);
 wait_until(Fun, N) ->
     case Fun() of
-        true -> ok;
-        false -> timer:sleep(10), wait_until(Fun, N - 1)
+        true ->
+            ok;
+        false ->
+            timer:sleep(10),
+            wait_until(Fun, N - 1)
     end.

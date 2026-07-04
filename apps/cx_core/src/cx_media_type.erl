@@ -41,12 +41,13 @@ update(Ctx = #auth_ctx{tenant_id = T}, MediaTypeId, Params) ->
 delete(Ctx = #auth_ctx{tenant_id = T}, MediaTypeId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"media_types:write">>),
-        ok ?= cx_store:tx(fun() ->
-            case mnesia:read(cx_media_type, {T, MediaTypeId}) of
-                [_] -> mnesia:delete({cx_media_type, {T, MediaTypeId}});
-                [] -> {error, not_found}
-            end
-        end),
+        ok ?=
+            cx_store:tx(fun() ->
+                case mnesia:read(cx_media_type, {T, MediaTypeId}) of
+                    [_] -> mnesia:delete({cx_media_type, {T, MediaTypeId}});
+                    [] -> {error, not_found}
+                end
+            end),
         publish(T, MediaTypeId, media_type_deleted),
         ok
     end.
@@ -59,6 +60,13 @@ to_map(#cx_media_type{key = {_, Id}, name = Name, config = Config}) ->
     #{<<"id">> => Id, <<"name">> => Name, <<"config">> => Config}.
 
 publish(TenantId, MediaTypeId, Type) ->
-    cx_event:publish(TenantId, undefined, MediaTypeId,
-                     #{type => Type, at => cx_time:now_ms(),
-                       data => #{<<"id">> => MediaTypeId}}).
+    cx_event:publish(
+        TenantId,
+        undefined,
+        MediaTypeId,
+        #{
+            type => Type,
+            at => cx_time:now_ms(),
+            data => #{<<"id">> => MediaTypeId}
+        }
+    ).

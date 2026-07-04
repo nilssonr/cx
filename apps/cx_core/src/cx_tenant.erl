@@ -13,14 +13,20 @@ create(Ctx, Params) ->
         {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
         {ok, Id} ?= cx_params:opt_bin(Params, <<"id">>, cx_id:new()),
         Now = cx_time:now_ms(),
-        Rec = #cx_tenant{id = Id, name = Name, status = active,
-                         created_at = Now, updated_at = Now},
-        ok ?= cx_store:tx(fun() ->
-            case mnesia:read(cx_tenant, Id) of
-                [] -> mnesia:write(Rec);
-                [_] -> {error, already_exists}
-            end
-        end),
+        Rec = #cx_tenant{
+            id = Id,
+            name = Name,
+            status = active,
+            created_at = Now,
+            updated_at = Now
+        },
+        ok ?=
+            cx_store:tx(fun() ->
+                case mnesia:read(cx_tenant, Id) of
+                    [] -> mnesia:write(Rec);
+                    [_] -> {error, already_exists}
+                end
+            end),
         publish(Id, tenant_created),
         {ok, to_map(Rec)}
     end.
@@ -46,11 +52,18 @@ update(Ctx, TenantId, Params) ->
         ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
         {ok, Rec0} ?= cx_store:read(cx_tenant, TenantId),
         {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_tenant.name),
-        {ok, Status} ?= cx_params:opt_atom(Params, <<"status">>,
-                                           [active, suspended],
-                                           Rec0#cx_tenant.status),
-        Rec = Rec0#cx_tenant{name = Name, status = Status,
-                             updated_at = cx_time:now_ms()},
+        {ok, Status} ?=
+            cx_params:opt_atom(
+                Params,
+                <<"status">>,
+                [active, suspended],
+                Rec0#cx_tenant.status
+            ),
+        Rec = Rec0#cx_tenant{
+            name = Name,
+            status = Status,
+            updated_at = cx_time:now_ms()
+        },
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(TenantId, tenant_updated),
         {ok, to_map(Rec)}
@@ -61,12 +74,13 @@ update(Ctx, TenantId, Params) ->
 delete(Ctx, TenantId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
-        ok ?= cx_store:tx(fun() ->
-            case mnesia:read(cx_tenant, TenantId) of
-                [_] -> mnesia:delete({cx_tenant, TenantId});
-                [] -> {error, not_found}
-            end
-        end),
+        ok ?=
+            cx_store:tx(fun() ->
+                case mnesia:read(cx_tenant, TenantId) of
+                    [_] -> mnesia:delete({cx_tenant, TenantId});
+                    [] -> {error, not_found}
+                end
+            end),
         publish(TenantId, tenant_deleted),
         ok
     end.
@@ -76,11 +90,20 @@ delete(Ctx, TenantId) ->
 fetch(TenantId) ->
     cx_store:read(cx_tenant, TenantId).
 
-to_map(#cx_tenant{id = Id, name = Name, status = Status,
-                  created_at = C, updated_at = U}) ->
-    #{<<"id">> => Id, <<"name">> => Name,
-      <<"status">> => atom_to_binary(Status),
-      <<"created_at">> => C, <<"updated_at">> => U}.
+to_map(#cx_tenant{
+    id = Id,
+    name = Name,
+    status = Status,
+    created_at = C,
+    updated_at = U
+}) ->
+    #{
+        <<"id">> => Id,
+        <<"name">> => Name,
+        <<"status">> => atom_to_binary(Status),
+        <<"created_at">> => C,
+        <<"updated_at">> => U
+    }.
 
 fetch_map(TenantId) ->
     maybe
@@ -89,6 +112,13 @@ fetch_map(TenantId) ->
     end.
 
 publish(TenantId, Type) ->
-    cx_event:publish(TenantId, undefined, undefined,
-                     #{type => Type, at => cx_time:now_ms(),
-                       data => #{<<"id">> => TenantId}}).
+    cx_event:publish(
+        TenantId,
+        undefined,
+        undefined,
+        #{
+            type => Type,
+            at => cx_time:now_ms(),
+            data => #{<<"id">> => TenantId}
+        }
+    ).
