@@ -7,8 +7,14 @@
 %% connection feeding the presence engine (connected/disconnected/
 %% activity).
 %%
-%% Close codes: 4400 protocol violation, 4401 auth failed, 4403 no
-%% agent identity, 4408 auth deadline, 4429 slow consumer.
+%% Close codes: 4400 protocol violation, 4401 auth failed / token
+%% expired / session revoked, 4403 no agent identity, 4408 auth
+%% deadline, 4429 slow consumer.
+%%
+%% First-frame auth is not forever: a session_check timer closes the
+%% socket when the token's exp passes and periodically re-resolves the
+%% claims (cx_auth_claims:to_ctx), so disabling a user or changing
+%% their roles takes effect on live sockets, not just new connections.
 
 -behaviour(cowboy_websocket).
 
@@ -23,6 +29,9 @@
     phase = unauth :: unauth | ready,
     ctx :: #auth_ctx{} | undefined,
     auth_tref :: reference() | undefined,
+    %% token expiry (ms since epoch) and the session_check timer
+    exp_ms = 0 :: integer(),
+    session_tref :: reference() | undefined,
     device_id :: binary() | undefined,
     %% presence session pid + our monitor on it
     presence :: {pid(), reference()} | undefined,
@@ -86,6 +95,32 @@ websocket_info({timeout, _TRef, auth_deadline}, State) ->
     {[], State};
 websocket_info({timeout, _TRef, presence_retry}, State = #ws{phase = ready}) ->
     {[], register_presence(State)};
+websocket_info(
+    {timeout, TRef, session_check},
+    State = #ws{phase = ready, session_tref = TRef, exp_ms = ExpMs, ctx = Ctx}
+) ->
+    %% no extra leeway: verify-time leeway already covered issuer clock
+    %% skew, and stretching past exp only prolongs revoked credentials
+    case cx_time:now_ms() >= ExpMs of
+        true ->
+            {[{close, 4401, <<"token_expired">>}], State};
+        false ->
+            %% re-resolve the claims: user disabled/deleted closes the
+            %% socket; role/permission changes refresh the live ctx
+            case cx_auth_claims:to_ctx(Ctx#auth_ctx.claims) of
+                {ok, Ctx1} ->
+                    State1 = State#ws{
+                        ctx = Ctx1,
+                        session_tref = schedule_session_check(ExpMs)
+                    },
+                    {[], State1};
+                {error, unauthorized} ->
+                    {[{close, 4401, <<"session_revoked">>}], State}
+            end
+    end;
+websocket_info({timeout, _TRef, session_check}, State) ->
+    %% stale timer from a superseded schedule — ignore
+    {[], State};
 websocket_info({cx_event, {_T, QueueId, Media, Event}}, State = #ws{phase = ready}) ->
     case queue_overflow(State) of
         true ->
@@ -132,8 +167,15 @@ authenticate(Token, DeviceId, State) ->
             %% valid token without an agent identity (integrator
             %% credentials) — nothing to deliver, nothing to register
             {[{close, 4403, <<"no_agent_identity">>}], State};
-        {ok, Ctx = #auth_ctx{tenant_id = T, user_id = UserId}} ->
+        {ok, Ctx = #auth_ctx{tenant_id = T, user_id = UserId, claims = Claims}} ->
             cancel_auth_timer(State#ws.auth_tref),
+            %% exp is required by cx_auth_jwt:validate_claims; if it is
+            %% somehow absent, fail closed as already-expired
+            ExpMs =
+                case maps:get(<<"exp">>, Claims, undefined) of
+                    E when is_integer(E) -> E * 1000;
+                    _ -> 0
+                end,
             %% subscribe BEFORE ready so no event can fall in the gap;
             %% the client resyncs current state via REST on connect
             ok = cx_event:subscribe(T),
@@ -142,7 +184,9 @@ authenticate(Token, DeviceId, State) ->
                 ctx = Ctx,
                 auth_tref = undefined,
                 device_id = DeviceId,
-                last_activity = cx_time:now_ms()
+                last_activity = cx_time:now_ms(),
+                exp_ms = ExpMs,
+                session_tref = schedule_session_check(ExpMs)
             }),
             Ready = cx_ws_proto:ready_frame(UserId, T, DeviceId),
             {[{text, Ready}], State1}
@@ -153,6 +197,13 @@ cancel_auth_timer(undefined) ->
 cancel_auth_timer(TRef) ->
     _ = erlang:cancel_timer(TRef),
     ok.
+
+%% Next re-validation: every ws_session_check_ms, but never past exp —
+%% expiry closes the socket at exp, not up to an interval late.
+schedule_session_check(ExpMs) ->
+    Interval = cx_cfg:get(cx_api_rest, ws_session_check_ms, 60000),
+    Delay = max(0, min(Interval, ExpMs - cx_time:now_ms())),
+    erlang:start_timer(Delay, self(), session_check).
 
 register_presence(State = #ws{ctx = Ctx}) ->
     DeviceInfo = #{

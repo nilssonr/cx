@@ -13,7 +13,9 @@
     bad_first_frame_closes/1,
     happy_auth_ready_ping/1,
     offer_event_targeted/1,
-    presence_fanout_and_disconnect/1
+    presence_fanout_and_disconnect/1,
+    expired_token_closes_socket/1,
+    disabled_user_closes_socket/1
 ]).
 
 all() ->
@@ -23,7 +25,9 @@ all() ->
         bad_first_frame_closes,
         happy_auth_ready_ping,
         offer_event_targeted,
-        presence_fanout_and_disconnect
+        presence_fanout_and_disconnect,
+        expired_token_closes_socket,
+        disabled_user_closes_socket
     ].
 
 init_per_suite(Config) ->
@@ -141,6 +145,50 @@ presence_fanout_and_disconnect(Config) ->
     #{<<"data">> := #{<<"user_id">> := UserA, <<"state">> := <<"offline">>}} =
         ws_wait_event(ConnB, StreamB, <<"presence_changed">>, 3000),
     gun:close(ConnB).
+
+%% A socket authenticated with a soon-expiring token closes at exp with
+%% 4401, even though the client keeps it alive.
+expired_token_closes_socket(Config) ->
+    ok = application:set_env(cx_api_rest, ws_session_check_ms, 200),
+    try
+        {T, UserId} = provision_user(<<"Expiring">>),
+        {Conn, Stream} = ws_open(Config),
+        Keypair = proplists:get_value(keypair, Config),
+        {ok, #cx_user{subject = Sub}} = cx_user:fetch(T, UserId),
+        Token = cx_auth_test:token(Keypair, #{
+            <<"sub">> => Sub,
+            <<"urn:zitadel:iam:org:id">> => T,
+            <<"exp">> => erlang:system_time(second) + 1
+        }),
+        ws_send(Conn, Stream, #{<<"type">> => <<"auth">>, <<"token">> => Token}),
+        #{<<"type">> := <<"ready">>} = ws_recv_json(Conn, Stream, 3000),
+        ?assertMatch(
+            {close, 4401, <<"token_expired">>},
+            ws_recv_close(Conn, Stream, 5000)
+        ),
+        gun:close(Conn)
+    after
+        ok = application:set_env(cx_api_rest, ws_session_check_ms, 60000)
+    end.
+
+%% Disabling a user mid-connection revokes the live socket at the next
+%% session check.
+disabled_user_closes_socket(Config) ->
+    ok = application:set_env(cx_api_rest, ws_session_check_ms, 200),
+    try
+        T = cx_id:new(),
+        Admin = cx_authz:ctx(T, [<<"*">>]),
+        UserId = create_user(Admin, <<"Doomed">>),
+        {Conn, Stream} = ws_auth(Config, T, UserId),
+        {ok, _} = cx_user:update(Admin, UserId, #{<<"status">> => <<"disabled">>}),
+        ?assertMatch(
+            {close, 4401, <<"session_revoked">>},
+            ws_recv_close(Conn, Stream, 5000)
+        ),
+        gun:close(Conn)
+    after
+        ok = application:set_env(cx_api_rest, ws_session_check_ms, 60000)
+    end.
 
 %% ---- helpers ----
 
