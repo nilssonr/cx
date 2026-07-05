@@ -138,7 +138,7 @@ read_declared(TenantId, UserId) ->
 %% hooks here.)
 recompute(Data = #pd{tenant = T, user_id = U}) ->
     Now = cx_time:now_ms(),
-    Threshold = cx_cfg:get(cx_presence, away_threshold_ms, 300000),
+    Threshold = cx_presence:away_threshold_ms(),
     DeviceCount = map_size(Data#pd.conns),
     #{state := State, message := Message} =
         cx_presence_calc:effective(

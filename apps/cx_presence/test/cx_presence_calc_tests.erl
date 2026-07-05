@@ -62,6 +62,30 @@ expired_until_strips_message_even_offline_test() ->
         cx_presence_calc:effective(D, 0, 0, 6000, ?THR)
     ).
 
+connectionless_test() ->
+    Row = #cx_presence_decl{
+        key = {<<"t">>, <<"u">>},
+        manual_state = <<"busy">>,
+        message = <<"m">>,
+        until = 5000,
+        updated_at = 1
+    },
+    %% no row: plain offline
+    ?assertEqual(
+        #{state => <<"offline">>, message => undefined, until => undefined},
+        cx_presence_calc:connectionless(undefined, 1000, ?THR)
+    ),
+    %% live manual layer: offline (no devices) but message + until shown
+    ?assertEqual(
+        #{state => <<"offline">>, message => <<"m">>, until => 5000},
+        cx_presence_calc:connectionless(Row, 4999, ?THR)
+    ),
+    %% expired until: the whole manual layer is gone
+    ?assertEqual(
+        #{state => <<"offline">>, message => undefined, until => undefined},
+        cx_presence_calc:connectionless(Row, 5000, ?THR)
+    ).
+
 from_row_test() ->
     ?assertEqual(
         #{manual_state => undefined, message => undefined, until => undefined},

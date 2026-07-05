@@ -83,14 +83,22 @@ Then in the Zitadel console (http://localhost:8081):
    matching id, or map your first users via `platform_admin_subjects`.
 2. Create a project + application with audience `cx-api` (matching
    `audiences` in `config/sys.config`).
-3. Human agents sign in through your SPA (authorization code + PKCE);
+3. Bootstrap: copy your Zitadel admin user's subject (user id) into
+   `platform_admin_subjects` in `config/sys.config` and restart — a fresh
+   deployment has zero tenants/users and that list is the only way to
+   create the first tenant. Shrink it back once real admin users exist.
+4. Human agents sign in through your SPA (authorization code + PKCE);
    integrators use client credentials / private-key JWT. cx only ever
    sees the resulting Bearer token.
 
 `config/sys.config` keys under `cx_auth`: `issuer`, `audiences`,
 `key_source` (`{jwks, Url}` or `{static, [JWKMap]}`), `jwks_refresh_ms`,
 `tenant_claim`, `platform_admin_subjects` (bootstrap: token subjects that
-get full permissions without a user row — keep this list tiny).
+get full permissions without a user row — keep this list tiny),
+`allow_insecure_jwks` (dev/test ONLY: permits a plain-http JWKS URL and
+skips TLS verification for the key fetch; the default `false` verifies
+against the OS trust store and refuses http — the checked-in dev config
+enables it for the plain-HTTP Zitadel container).
 
 ## Trying the flow without Zitadel
 

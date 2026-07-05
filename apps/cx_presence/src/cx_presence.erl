@@ -14,9 +14,11 @@
 
 -export([set_own/2, get_own/1, directory/1]).
 -export([connected/3, disconnected/2, activity/1]).
+-export([away_threshold_ms/0]).
 
 -define(CALL_TIMEOUT, 5000).
 -define(CONNECT_RETRIES, 3).
+-define(AWAY_THRESHOLD_DEFAULT_MS, 300000).
 
 %% ---- domain surface ----
 
@@ -95,6 +97,12 @@ activity(#auth_ctx{tenant_id = T, user_id = UserId}) ->
         undefined -> ok;
         Pid -> gen_statem:cast(Pid, {activity, cx_time:now_ms()})
     end.
+
+%% Single home for the away threshold (config key + default); the
+%% session's recompute reads it through here too.
+-spec away_threshold_ms() -> pos_integer().
+away_threshold_ms() ->
+    cx_cfg:get(cx_presence, away_threshold_ms, ?AWAY_THRESHOLD_DEFAULT_MS).
 
 %% ---- internals ----
 
@@ -175,21 +183,17 @@ parse_until(Params, Manual, Message) ->
 propagate(T, UserId, OldRow, Now) ->
     case session_pid(T, UserId) of
         undefined ->
-            Threshold = cx_cfg:get(cx_presence, away_threshold_ms, 300000),
-            OldEff = cx_presence_calc:effective(
-                cx_presence_calc:from_row(OldRow), 0, 0, Now, Threshold
-            ),
+            Threshold = away_threshold_ms(),
+            OldEff = cx_presence_calc:connectionless(OldRow, Now, Threshold),
             NewRow = read_decl(T, UserId),
-            NewEff = cx_presence_calc:effective(
-                cx_presence_calc:from_row(NewRow), 0, 0, Now, Threshold
-            ),
-            #{until := NormUntil} =
-                cx_presence_calc:normalize(cx_presence_calc:from_row(NewRow), Now),
-            case NewEff =:= OldEff of
+            NewEff = cx_presence_calc:connectionless(NewRow, Now, Threshold),
+            %% publish iff state/message changed — a pure `until` change
+            %% is not a transition
+            case maps:remove(until, NewEff) =:= maps:remove(until, OldEff) of
                 true ->
                     ok;
                 false ->
-                    #{state := State, message := Message} = NewEff,
+                    #{state := State, message := Message, until := NormUntil} = NewEff,
                     cx_event:publish(T, undefined, undefined, presence_changed, #{
                         <<"user_id">> => UserId,
                         <<"state">> => State,
@@ -237,9 +241,8 @@ effective_now(T, UserId, Row, Now) ->
     end.
 
 lazy_effective(Row, Now) ->
-    Threshold = cx_cfg:get(cx_presence, away_threshold_ms, 300000),
     #{state := S, message := M} =
-        cx_presence_calc:effective(cx_presence_calc:from_row(Row), 0, 0, Now, Threshold),
+        cx_presence_calc:connectionless(Row, Now, away_threshold_ms()),
     {S, M, 0}.
 
 %% Live eff rows only; dead-pid rows are dropped (stale-snapshot pattern).
@@ -265,13 +268,8 @@ directory_entry(#cx_user{key = {_, UserId}, name = Name}, Effs, Decls, Now) ->
                 {S, M, U};
             _ ->
                 Row = maps:get(UserId, Decls, undefined),
-                Threshold = cx_cfg:get(cx_presence, away_threshold_ms, 300000),
-                #{state := S, message := M} =
-                    cx_presence_calc:effective(
-                        cx_presence_calc:from_row(Row), 0, 0, Now, Threshold
-                    ),
-                #{until := U} =
-                    cx_presence_calc:normalize(cx_presence_calc:from_row(Row), Now),
+                #{state := S, message := M, until := U} =
+                    cx_presence_calc:connectionless(Row, Now, away_threshold_ms()),
                 {S, M, U}
         end,
     #{

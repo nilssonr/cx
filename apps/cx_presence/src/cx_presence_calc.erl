@@ -7,7 +7,7 @@
 
 -include_lib("cx_core/include/cx_core.hrl").
 
--export([from_row/1, normalize/2, effective/5]).
+-export([from_row/1, normalize/2, effective/5, connectionless/3]).
 
 -type declared() :: #{
     manual_state := binary() | undefined,
@@ -59,3 +59,19 @@ effective(Declared0, DeviceCount, LastActivityMs, NowMs, AwayThresholdMs) ->
             true -> <<"online">>
         end,
     #{state => State, message => Message}.
+
+%% Effective presence for a user with zero live connections: the
+%% declared row is the entire input (no devices, no activity). Bundles
+%% the normalized `until` with state/message — the three values every
+%% connectionless read (directory, own-map, facade publish) needs.
+-spec connectionless(#cx_presence_decl{} | undefined, integer(), pos_integer()) ->
+    #{
+        state := binary(),
+        message := binary() | undefined,
+        until := integer() | undefined
+    }.
+connectionless(Row, NowMs, AwayThresholdMs) ->
+    Declared = from_row(Row),
+    #{state := S, message := M} = effective(Declared, 0, 0, NowMs, AwayThresholdMs),
+    #{until := U} = normalize(Declared, NowMs),
+    #{state => S, message => M, until => U}.
