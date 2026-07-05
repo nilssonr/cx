@@ -170,6 +170,27 @@ admin_crud_roundtrip(Config) ->
             }
         ),
     [#{<<"skill_id">> := SkillId, <<"rank">> := 2}] = SkillsOut,
+    %% escalation guard over the wire: the wildcard and platform-only
+    %% perms are not tenant-assignable
+    {422, #{<<"error">> := <<"invalid:permissions">>}} =
+        req(
+            Config,
+            post,
+            Base ++ "/roles",
+            Admin,
+            #{<<"name">> => <<"Escalate">>, <<"permissions">> => [<<"*">>]}
+        ),
+    {422, #{<<"error">> := <<"invalid:permissions">>}} =
+        req(
+            Config,
+            post,
+            Base ++ "/roles",
+            Admin,
+            #{
+                <<"name">> => <<"Escalate">>,
+                <<"permissions">> => [<<"tenants:admin">>]
+            }
+        ),
     {422, #{<<"error">> := <<"invalid:levels">>}} =
         req(
             Config,

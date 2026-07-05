@@ -10,6 +10,7 @@ auth_test_() ->
         [
             fun() -> platform_admin_token(Keypair) end,
             fun() -> user_token_role_permissions(Keypair) end,
+            fun() -> poisoned_role_row_filtered(Keypair) end,
             fun() -> expired_token(Keypair) end,
             fun() -> wrong_audience(Keypair) end,
             fun() -> wrong_issuer(Keypair) end,
@@ -70,6 +71,37 @@ user_token_role_permissions(Keypair) ->
     {ok, Ctx} = cx_auth:authenticate(Token),
     ?assertEqual(UserId, Ctx#auth_ctx.user_id),
     ?assert(cx_authz:has(Ctx, <<"agent:ready:self">>)),
+    ?assertNot(cx_authz:has(Ctx, <<"queues:write">>)).
+
+%% A role row carrying out-of-catalog permissions (predating the
+%% cx_role allow-list, or written around it) must be neutralized when
+%% the ctx is built — the wildcard and platform perms never reach a
+%% tenant token.
+poisoned_role_row_filtered(Keypair) ->
+    T = cx_id:new(),
+    Admin = cx_authz:ctx(T, [<<"*">>]),
+    RoleId = cx_id:new(),
+    ok = cx_store:tx(fun() ->
+        mnesia:write(#cx_role{
+            key = {T, RoleId},
+            name = <<"poisoned">>,
+            permissions = [<<"*">>, <<"tenants:admin">>, <<"queues:read">>]
+        })
+    end),
+    {ok, #{<<"id">> := _}} =
+        cx_user:create(Admin, #{
+            <<"name">> => <<"Evil">>,
+            <<"email">> => <<"e@x">>,
+            <<"subject">> => <<"evil-sub">>,
+            <<"role_ids">> => [RoleId]
+        }),
+    Token = cx_auth_test:token(Keypair, #{
+        <<"sub">> => <<"evil-sub">>,
+        ?TENANT_CLAIM => T
+    }),
+    {ok, Ctx} = cx_auth:authenticate(Token),
+    ?assert(cx_authz:has(Ctx, <<"queues:read">>)),
+    ?assertNot(cx_authz:has(Ctx, <<"tenants:admin">>)),
     ?assertNot(cx_authz:has(Ctx, <<"queues:write">>)).
 
 expired_token(Keypair) ->

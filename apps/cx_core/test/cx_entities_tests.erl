@@ -16,6 +16,7 @@ entities_test_() ->
             fun user_tenant_scoping/0,
             fun user_fetch_by_subject_scoped/0,
             fun role_crud/0,
+            fun role_rejects_unassignable_permissions/0,
             fun skill_crud_and_level_validation/0,
             fun queue_crud_and_skill_req_parsing/0,
             fun routing_profile_crud/0,
@@ -203,6 +204,37 @@ role_crud() ->
     NoPerms = cx_authz:ctx(T, []),
     {ok, #{<<"name">> := <<"Viewer">>}} = cx_role:get(NoPerms, Id),
     {ok, [_]} = cx_role:list(NoPerms),
+    ok = cx_role:delete(Ctx, Id).
+
+%% A tenant admin with roles:write must not be able to grant the
+%% platform wildcard, platform-only perms, or unknown strings.
+role_rejects_unassignable_permissions() ->
+    T = cx_id:new(),
+    Ctx = admin(T),
+    Invalid = {error, {invalid, <<"permissions">>}},
+    ?assertEqual(
+        Invalid,
+        cx_role:create(Ctx, #{<<"name">> => <<"r">>, <<"permissions">> => [<<"*">>]})
+    ),
+    ?assertEqual(
+        Invalid,
+        cx_role:create(Ctx, #{
+            <<"name">> => <<"r">>, <<"permissions">> => [<<"tenants:admin">>]
+        })
+    ),
+    ?assertEqual(
+        Invalid,
+        cx_role:create(Ctx, #{
+            <<"name">> => <<"r">>,
+            <<"permissions">> => [<<"queues:read">>, <<"made:up">>]
+        })
+    ),
+    %% update of a valid role cannot smuggle them in either
+    {ok, #{<<"id">> := Id}} =
+        cx_role:create(Ctx, #{
+            <<"name">> => <<"r">>, <<"permissions">> => [<<"queues:read">>]
+        }),
+    ?assertEqual(Invalid, cx_role:update(Ctx, Id, #{<<"permissions">> => [<<"*">>]})),
     ok = cx_role:delete(Ctx, Id).
 
 skill_crud_and_level_validation() ->

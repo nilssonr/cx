@@ -60,6 +60,10 @@ resolve_user(TenantId, Subject, Claims) ->
             {error, unauthorized}
     end.
 
+%% Union of the user's role permissions, filtered to the
+%% tenant-assignable catalog: cx_role rejects out-of-catalog strings at
+%% write time, and this filter neutralizes any row that predates that
+%% check (or was written around it) without needing a data migration.
 role_permissions(TenantId, RoleIds) ->
     Perms = lists:flatmap(
         fun(RoleId) ->
@@ -70,4 +74,4 @@ role_permissions(TenantId, RoleIds) ->
         end,
         RoleIds
     ),
-    sets:from_list(Perms).
+    sets:from_list([P || P <- Perms, cx_perm:is_tenant_assignable(P)]).
