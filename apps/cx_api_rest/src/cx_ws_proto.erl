@@ -61,8 +61,8 @@ event_frame(QueueId, Media, #{type := Type, at := At, data := Data}) ->
         <<"event">> => #{
             <<"type">> => atom_to_binary(Type),
             <<"at">> => At,
-            <<"queue_id">> => undef_to_null(QueueId),
-            <<"media_type">> => undef_to_null(Media),
+            <<"queue_id">> => cx_json:undef_to_null(QueueId),
+            <<"media_type">> => cx_json:undef_to_null(Media),
             <<"data">> => Data
         }
     }).
@@ -72,7 +72,7 @@ ready_frame(UserId, TenantId, DeviceId) ->
         <<"type">> => <<"ready">>,
         <<"user_id">> => UserId,
         <<"tenant_id">> => TenantId,
-        <<"device_id">> => undef_to_null(DeviceId)
+        <<"device_id">> => cx_json:undef_to_null(DeviceId)
     }).
 
 pong_frame() ->
@@ -92,6 +92,3 @@ relevant(#{type := Type, data := Data}, UserId) ->
             maps:get(<<"agent_id">>, Data, undefined) =:= UserId);
 relevant(_, _) ->
     false.
-
-undef_to_null(undefined) -> null;
-undef_to_null(V) -> V.

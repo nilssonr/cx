@@ -12,7 +12,7 @@
 %% consumers must tolerate offline/online pairs anyway (crash recovery
 %% produces the same sequence).
 %%
-%% recompute/2 is the single choke point every effective transition
+%% recompute/1 is the single choke point every effective transition
 %% passes through — a future tenant policy coupling presence to router
 %% readiness (e.g. auto not-ready on dnd) hooks there.
 
@@ -166,15 +166,11 @@ write_eff(#pd{tenant = T, user_id = U}, State, Message, Until, DeviceCount, Now)
     }).
 
 publish(TenantId, UserId, State, Message, Until) ->
-    cx_event:publish(TenantId, undefined, undefined, #{
-        type => presence_changed,
-        at => cx_time:now_ms(),
-        data => #{
-            <<"user_id">> => UserId,
-            <<"state">> => State,
-            <<"message">> => undef_to_null(Message),
-            <<"until">> => undef_to_null(Until)
-        }
+    cx_event:publish(TenantId, undefined, undefined, presence_changed, #{
+        <<"user_id">> => UserId,
+        <<"state">> => State,
+        <<"message">> => cx_json:undef_to_null(Message),
+        <<"until">> => cx_json:undef_to_null(Until)
     }).
 
 %% away timer only runs while automatically online — it wakes us at the
@@ -188,6 +184,3 @@ until_action(undefined, _Now) ->
     [{{timeout, until_expiry}, cancel}];
 until_action(Until, Now) ->
     [{{timeout, until_expiry}, min(max(1, Until - Now), ?MAX_TIMER_MS), expire}].
-
-undef_to_null(undefined) -> null;
-undef_to_null(V) -> V.

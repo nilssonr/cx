@@ -127,12 +127,12 @@ to_map(#cx_user{
 }) ->
     #{
         <<"id">> => Id,
-        <<"subject">> => null_if_undefined(Subject),
+        <<"subject">> => cx_json:undef_to_null(Subject),
         <<"name">> => Name,
         <<"email">> => Email,
         <<"role_ids">> => RoleIds,
         <<"skills">> => skills_to_list(Skills),
-        <<"routing_profile_id">> => null_if_undefined(ProfileId),
+        <<"routing_profile_id">> => cx_json:undef_to_null(ProfileId),
         <<"status">> => atom_to_binary(Status),
         <<"created_at">> => C,
         <<"updated_at">> => U
@@ -145,9 +145,6 @@ skills_to_list(Skills) ->
         #{<<"skill_id">> => SkillId, <<"rank">> => Rank}
      || {SkillId, Rank} <- lists:keysort(1, maps:to_list(Skills))
     ].
-
-null_if_undefined(undefined) -> null;
-null_if_undefined(V) -> V.
 
 opt_bin_list(Params, Key) ->
     opt_bin_list(Params, Key, []).
@@ -231,13 +228,4 @@ check_refs(Tab, T, Ids, Field) ->
     end.
 
 publish(TenantId, UserId, Type) ->
-    cx_event:publish(
-        TenantId,
-        undefined,
-        undefined,
-        #{
-            type => Type,
-            at => cx_time:now_ms(),
-            data => #{<<"id">> => UserId}
-        }
-    ).
+    cx_event:publish(TenantId, undefined, undefined, Type, #{<<"id">> => UserId}).

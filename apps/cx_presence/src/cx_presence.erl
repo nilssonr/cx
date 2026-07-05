@@ -23,7 +23,7 @@
 set_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"presence:set:self">>),
-        ok ?= known_user(UserId),
+        ok ?= cx_authz:require_user(Ctx),
         {ok, Manual} ?= parse_state(Params),
         {ok, Message} ?= cx_params:opt_bin(Params, <<"message">>, undefined),
         {ok, Until} ?= parse_until(Params, Manual, Message),
@@ -49,8 +49,7 @@ set_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, Params) ->
 
 get_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
     maybe
-        ok ?= known_user(UserId),
-        _ = Ctx,
+        ok ?= cx_authz:require_user(Ctx),
         {ok, own_map(T, UserId)}
     end.
 
@@ -74,11 +73,13 @@ directory(#auth_ctx{tenant_id = T}) ->
 %% ---- transport-internal connectivity signals ----
 
 -spec connected(#auth_ctx{}, pid(), map()) -> {ok, pid()} | {error, term()}.
-connected(#auth_ctx{tenant_id = T, user_id = UserId}, ConnPid, DeviceInfo) ->
+connected(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, ConnPid, DeviceInfo) ->
     maybe
-        ok ?= known_user(UserId),
+        ok ?= cx_authz:require_user(Ctx),
         {ok, #cx_user{status = active}} ?= fetch_active(T, UserId),
         register_conn(T, UserId, ConnPid, DeviceInfo, ?CONNECT_RETRIES)
+    else
+        {error, Reason} -> {error, Reason}
     end.
 
 -spec disconnected(#auth_ctx{}, pid()) -> ok.
@@ -96,9 +97,6 @@ activity(#auth_ctx{tenant_id = T, user_id = UserId}) ->
     end.
 
 %% ---- internals ----
-
-known_user(undefined) -> {error, no_user};
-known_user(_) -> ok.
 
 fetch_active(T, UserId) ->
     case cx_user:fetch(T, UserId) of
@@ -192,15 +190,11 @@ propagate(T, UserId, OldRow, Now) ->
                     ok;
                 false ->
                     #{state := State, message := Message} = NewEff,
-                    cx_event:publish(T, undefined, undefined, #{
-                        type => presence_changed,
-                        at => Now,
-                        data => #{
-                            <<"user_id">> => UserId,
-                            <<"state">> => State,
-                            <<"message">> => undef_to_null(Message),
-                            <<"until">> => undef_to_null(NormUntil)
-                        }
+                    cx_event:publish(T, undefined, undefined, presence_changed, #{
+                        <<"user_id">> => UserId,
+                        <<"state">> => State,
+                        <<"message">> => cx_json:undef_to_null(Message),
+                        <<"until">> => cx_json:undef_to_null(NormUntil)
                     })
             end;
         Pid ->
@@ -221,9 +215,9 @@ own_map(T, UserId) ->
     {State, Message, DeviceCount} = effective_now(T, UserId, Row, Now),
     #{
         <<"state">> => State,
-        <<"manual_state">> => undef_to_null(maps:get(manual_state, Norm)),
-        <<"message">> => undef_to_null(Message),
-        <<"until">> => undef_to_null(maps:get(until, Norm)),
+        <<"manual_state">> => cx_json:undef_to_null(maps:get(manual_state, Norm)),
+        <<"message">> => cx_json:undef_to_null(Message),
+        <<"until">> => cx_json:undef_to_null(maps:get(until, Norm)),
         <<"device_count">> => DeviceCount,
         <<"updated_at">> => decl_updated_at(Row)
     }.
@@ -284,8 +278,8 @@ directory_entry(#cx_user{key = {_, UserId}, name = Name}, Effs, Decls, Now) ->
         <<"user_id">> => UserId,
         <<"name">> => Name,
         <<"state">> => State,
-        <<"message">> => undef_to_null(Message),
-        <<"until">> => undef_to_null(Until)
+        <<"message">> => cx_json:undef_to_null(Message),
+        <<"until">> => cx_json:undef_to_null(Until)
     }.
 
 %% best-effort cleanup of an eff row whose owner died brutally
@@ -299,6 +293,3 @@ drop_stale_eff(T, UserId) ->
 
 decl_updated_at(undefined) -> null;
 decl_updated_at(#cx_presence_decl{updated_at = At}) -> At.
-
-undef_to_null(undefined) -> null;
-undef_to_null(V) -> V.

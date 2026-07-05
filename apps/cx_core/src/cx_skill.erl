@@ -110,13 +110,4 @@ parse_levels(_) ->
     {error, {invalid, <<"levels">>}}.
 
 publish(TenantId, SkillId, Type) ->
-    cx_event:publish(
-        TenantId,
-        undefined,
-        undefined,
-        #{
-            type => Type,
-            at => cx_time:now_ms(),
-            data => #{<<"id">> => SkillId}
-        }
-    ).
+    cx_event:publish(TenantId, undefined, undefined, Type, #{<<"id">> => SkillId}).

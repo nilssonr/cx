@@ -497,13 +497,4 @@ agent_snapshots(TenantId) ->
     ].
 
 publish(#qd{tenant = TenantId, queue_id = QueueId}, Media, Type, ExtraData) ->
-    cx_event:publish(
-        TenantId,
-        QueueId,
-        Media,
-        #{
-            type => Type,
-            at => cx_time:now_ms(),
-            data => ExtraData
-        }
-    ).
+    cx_event:publish(TenantId, QueueId, Media, Type, ExtraData).

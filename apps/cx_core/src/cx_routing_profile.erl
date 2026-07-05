@@ -174,13 +174,4 @@ parse_guards(_) ->
     {error, {invalid, <<"guards">>}}.
 
 publish(TenantId, ProfileId, Type) ->
-    cx_event:publish(
-        TenantId,
-        undefined,
-        undefined,
-        #{
-            type => Type,
-            at => cx_time:now_ms(),
-            data => #{<<"id">> => ProfileId}
-        }
-    ).
+    cx_event:publish(TenantId, undefined, undefined, Type, #{<<"id">> => ProfileId}).

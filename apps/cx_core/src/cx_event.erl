@@ -7,7 +7,7 @@
 
 -export([scope/0]).
 -export([subscribe/1, subscribe/2, unsubscribe/1, unsubscribe/2]).
--export([publish/4]).
+-export([publish/5]).
 
 -define(SCOPE, cx_event).
 
@@ -32,11 +32,13 @@ unsubscribe(TenantId, QueueId) ->
     _ = pg:leave(?SCOPE, {queue, TenantId, QueueId}, self()),
     ok.
 
-%% Event :: #{type := atom(), at := integer(), data := map()}.
-%% QueueId/MediaTypeId may be `undefined` for events with no queue/media
-%% dimension (e.g. config CRUD).
--spec publish(binary(), binary() | undefined, binary() | undefined, map()) -> ok.
-publish(TenantId, QueueId, MediaTypeId, Event) ->
+%% Publishes #{type := Type, at := now_ms, data := Data} — the envelope
+%% is stamped here so every publisher shares one shape. QueueId/MediaTypeId
+%% may be `undefined` for events with no queue/media dimension (e.g.
+%% config CRUD).
+-spec publish(binary(), binary() | undefined, binary() | undefined, atom(), map()) -> ok.
+publish(TenantId, QueueId, MediaTypeId, Type, Data) ->
+    Event = #{type => Type, at => cx_time:now_ms(), data => Data},
     Msg = {cx_event, {TenantId, QueueId, MediaTypeId, Event}},
     Tenant = pg:get_members(?SCOPE, {tenant, TenantId}),
     Queue =

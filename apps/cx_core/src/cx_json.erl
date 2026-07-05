@@ -5,7 +5,7 @@
 %% value instead of an exception, encode accepts the atoms produced by
 %% our to_map functions (null, true, false).
 
--export([encode/1, decode/1]).
+-export([encode/1, decode/1, undef_to_null/1]).
 
 %% dynamic(): callers pass maps built from records; json:encode's
 %% encode_value() is structurally satisfied but not provable for term().
@@ -24,3 +24,8 @@ decode(Bin) when is_binary(Bin) ->
     end;
 decode(_) ->
     {error, {invalid, json}}.
+
+%% JSON-map convention: absent optional values encode as null.
+-spec undef_to_null(T | undefined) -> T | null.
+undef_to_null(undefined) -> null;
+undef_to_null(V) -> V.

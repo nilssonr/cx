@@ -20,7 +20,7 @@
 start_session(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
-        ok ?= known_user(UserId),
+        ok ?= cx_authz:require_user(Ctx),
         {ok, User} ?= cx_user:fetch(T, UserId),
         ok ?= active_user(User),
         {ok, Profile} ?= load_profile(T, User#cx_user.routing_profile_id),
@@ -170,9 +170,6 @@ call(Pid, Msg) ->
         exit:{noproc, _} -> {error, no_session}
     end.
 
-known_user(undefined) -> {error, no_user};
-known_user(_) -> ok.
-
 active_user(#cx_user{status = active}) -> ok;
 active_user(#cx_user{}) -> {error, forbidden}.
 
@@ -223,12 +220,9 @@ interaction_to_map(#cx_interaction{
         <<"media_type">> => Media,
         <<"properties">> => Props,
         <<"state">> => atom_to_binary(State),
-        <<"agent_id">> => undef_to_null(AgentId),
+        <<"agent_id">> => cx_json:undef_to_null(AgentId),
         <<"created_at">> => CreatedAt,
         <<"enqueued_at">> => EnqueuedAt,
-        <<"accepted_at">> => undef_to_null(AcceptedAt),
-        <<"completed_at">> => undef_to_null(CompletedAt)
+        <<"accepted_at">> => cx_json:undef_to_null(AcceptedAt),
+        <<"completed_at">> => cx_json:undef_to_null(CompletedAt)
     }.
-
-undef_to_null(undefined) -> null;
-undef_to_null(V) -> V.

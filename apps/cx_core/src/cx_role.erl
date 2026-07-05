@@ -86,13 +86,4 @@ opt_perms(Params, Default) ->
     end.
 
 publish(TenantId, RoleId, Type) ->
-    cx_event:publish(
-        TenantId,
-        undefined,
-        undefined,
-        #{
-            type => Type,
-            at => cx_time:now_ms(),
-            data => #{<<"id">> => RoleId}
-        }
-    ).
+    cx_event:publish(TenantId, undefined, undefined, Type, #{<<"id">> => RoleId}).

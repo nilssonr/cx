@@ -112,13 +112,4 @@ fetch_map(TenantId) ->
     end.
 
 publish(TenantId, Type) ->
-    cx_event:publish(
-        TenantId,
-        undefined,
-        undefined,
-        #{
-            type => Type,
-            at => cx_time:now_ms(),
-            data => #{<<"id">> => TenantId}
-        }
-    ).
+    cx_event:publish(TenantId, undefined, undefined, Type, #{<<"id">> => TenantId}).

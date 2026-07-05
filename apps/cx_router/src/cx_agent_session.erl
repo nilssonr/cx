@@ -342,9 +342,4 @@ ready_to_bin({not_ready, undefined}) -> <<"not_ready">>;
 ready_to_bin({not_ready, Reason}) -> <<"not_ready:", Reason/binary>>.
 
 publish(#sess{tenant = Tenant}, QueueId, Media, Type, ExtraData) ->
-    cx_event:publish(
-        Tenant,
-        QueueId,
-        Media,
-        #{type => Type, at => cx_time:now_ms(), data => ExtraData}
-    ).
+    cx_event:publish(Tenant, QueueId, Media, Type, ExtraData).

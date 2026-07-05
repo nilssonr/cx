@@ -109,10 +109,8 @@ offer_event_targeted(Config) ->
     } = ws_wait_event(ConnA, StreamA, <<"offer_created">>, 3000),
 
     %% B saw no offer: a marker event published after proves ordering
-    cx_event:publish(T, undefined, undefined, #{
-        type => presence_changed,
-        at => cx_time:now_ms(),
-        data => #{<<"user_id">> => <<"marker">>, <<"state">> => <<"online">>}
+    cx_event:publish(T, undefined, undefined, presence_changed, #{
+        <<"user_id">> => <<"marker">>, <<"state">> => <<"online">>
     }),
     %% B's own online event precedes the marker; wait for the marker
     %% specifically — every presence event before it proves no offer

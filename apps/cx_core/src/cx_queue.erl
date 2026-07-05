@@ -185,13 +185,4 @@ parse_skill_reqs(_) ->
     {error, {invalid, <<"skill_reqs">>}}.
 
 publish(TenantId, QueueId, Type) ->
-    cx_event:publish(
-        TenantId,
-        QueueId,
-        undefined,
-        #{
-            type => Type,
-            at => cx_time:now_ms(),
-            data => #{<<"id">> => QueueId}
-        }
-    ).
+    cx_event:publish(TenantId, QueueId, undefined, Type, #{<<"id">> => QueueId}).
