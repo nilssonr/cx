@@ -19,6 +19,7 @@ entities_test_() ->
             fun role_rejects_unassignable_permissions/0,
             fun skill_crud_and_level_validation/0,
             fun queue_crud_and_skill_req_parsing/0,
+            fun queue_timeout_defaults_and_infinite_ring/0,
             fun routing_profile_crud/0,
             fun not_ready_reason_crud/0,
             fun permission_denied/0
@@ -306,6 +307,37 @@ queue_crud_and_skill_req_parsing() ->
     ),
     {ok, #{<<"status">> := <<"closed">>}} =
         cx_queue:update(Ctx, Id, #{<<"status">> => <<"closed">>}),
+    ok = cx_queue:delete(Ctx, Id).
+
+%% Defaults are applied at creation (not record defaults); ring time
+%% accepts <<"infinite">> and rejects zero/garbage.
+queue_timeout_defaults_and_infinite_ring() ->
+    T = cx_id:new(),
+    Ctx = admin(T),
+    {ok, #{
+        <<"id">> := Id,
+        <<"offer_timeout_ms">> := 6000,
+        <<"wrapup_duration_ms">> := 30000
+    }} =
+        cx_queue:create(Ctx, #{<<"name">> => <<"defaults">>}),
+    %% infinite ring round-trips through update + read
+    {ok, #{<<"offer_timeout_ms">> := <<"infinite">>}} =
+        cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => <<"infinite">>}),
+    {ok, #{<<"offer_timeout_ms">> := <<"infinite">>}} = cx_queue:get(Ctx, Id),
+    %% and back to a finite value
+    {ok, #{<<"offer_timeout_ms">> := 300}} =
+        cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => 300}),
+    Invalid = {error, {invalid, <<"offer_timeout_ms">>}},
+    ?assertEqual(Invalid, cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => 0})),
+    ?assertEqual(
+        Invalid,
+        cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => <<"forever">>})
+    ),
+    {ok, #{<<"offer_timeout_ms">> := <<"infinite">>}} =
+        cx_queue:create(Ctx, #{
+            <<"name">> => <<"patience">>,
+            <<"offer_timeout_ms">> => <<"infinite">>
+        }),
     ok = cx_queue:delete(Ctx, Id).
 
 routing_profile_crud() ->

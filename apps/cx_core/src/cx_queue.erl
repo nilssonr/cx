@@ -5,13 +5,24 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
+%% Defaults are applied HERE, at creation — deliberately not in the
+%% record definition, so nothing can materialize a queue with implicit
+%% values by merely constructing #cx_queue{}.
+-define(DEFAULT_WRAPUP_DURATION_MS, 30000).
+-define(DEFAULT_OFFER_TIMEOUT_MS, 6000).
+
 create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
         {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
         {ok, SkillReqs} ?= parse_skill_reqs(maps:get(<<"skill_reqs">>, Params, [])),
-        {ok, WrapupMs} ?= cx_params:opt_int(Params, <<"wrapup_duration_ms">>, 30000),
-        {ok, OfferMs} ?= cx_params:opt_int(Params, <<"offer_timeout_ms">>, 30000),
+        {ok, WrapupMs} ?=
+            cx_params:opt_int(
+                Params,
+                <<"wrapup_duration_ms">>,
+                ?DEFAULT_WRAPUP_DURATION_MS
+            ),
+        {ok, OfferMs} ?= opt_offer_timeout(Params, ?DEFAULT_OFFER_TIMEOUT_MS),
         {ok, Status} ?= cx_params:opt_atom(Params, <<"status">>, [open, closed], open),
         Rec = #cx_queue{
             key = {T, cx_id:new()},
@@ -56,12 +67,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
                 <<"wrapup_duration_ms">>,
                 Rec0#cx_queue.wrapup_duration_ms
             ),
-        {ok, OfferMs} ?=
-            cx_params:opt_int(
-                Params,
-                <<"offer_timeout_ms">>,
-                Rec0#cx_queue.offer_timeout_ms
-            ),
+        {ok, OfferMs} ?= opt_offer_timeout(Params, Rec0#cx_queue.offer_timeout_ms),
         {ok, Status} ?=
             cx_params:opt_atom(
                 Params,
@@ -124,9 +130,23 @@ to_map(#cx_queue{
         <<"name">> => Name,
         <<"skill_reqs">> => [skill_req_to_map(R) || R <- SkillReqs],
         <<"wrapup_duration_ms">> => WrapupMs,
-        <<"offer_timeout_ms">> => OfferMs,
+        <<"offer_timeout_ms">> => offer_timeout_to_json(OfferMs),
         <<"status">> => atom_to_binary(Status)
     }.
+
+%% Ring time: positive milliseconds, or <<"infinite">> to ring forever
+%% (the queue then never arms the offer timer). Zero is rejected — a
+%% 0 ms offer would expire before the agent could ever see it.
+opt_offer_timeout(Params, Default) ->
+    case Params of
+        #{<<"offer_timeout_ms">> := V} when is_integer(V), V > 0 -> {ok, V};
+        #{<<"offer_timeout_ms">> := <<"infinite">>} -> {ok, infinity};
+        #{<<"offer_timeout_ms">> := _} -> {error, {invalid, <<"offer_timeout_ms">>}};
+        _ -> {ok, Default}
+    end.
+
+offer_timeout_to_json(infinity) -> <<"infinite">>;
+offer_timeout_to_json(Ms) -> Ms.
 
 skill_req_to_map(#skill_req{
     skill_id = SkillId,

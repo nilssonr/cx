@@ -68,8 +68,12 @@
     key :: {binary(), binary()},
     name :: binary(),
     skill_reqs = [] :: [#skill_req{}],
-    wrapup_duration_ms = 30000 :: non_neg_integer(),
-    offer_timeout_ms = 30000 :: pos_integer(),
+    %% no record defaults on purpose: the creation defaults live in
+    %% cx_queue:create/2, so every construction states its values and
+    %% eqWAlizer rejects one that forgets
+    wrapup_duration_ms :: non_neg_integer(),
+    %% ring time for an offer; infinity = ring forever
+    offer_timeout_ms :: pos_integer() | infinity,
     status = open :: open | closed
 }).
 

@@ -21,7 +21,8 @@
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
-    backlog_drains_one_offer_per_pass/1
+    backlog_drains_one_offer_per_pass/1,
+    infinite_ring_offer_stays_pending/1
 ]).
 
 all() ->
@@ -41,7 +42,8 @@ all() ->
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
-        backlog_drains_one_offer_per_pass
+        backlog_drains_one_offer_per_pass,
+        infinite_ring_offer_stays_pending
     ].
 
 init_per_suite(Config) ->
@@ -673,6 +675,37 @@ backlog_drains_one_offer_per_pass(_Config) ->
         [1, 2, 3]
     ),
     ?assertEqual(Ids, Drained),
+    ok.
+
+%% offer_timeout_ms = "infinite": the queue never arms the offer timer,
+%% so the offer rings until the agent answers.
+infinite_ring_offer_stays_pending(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0,
+        <<"offer_timeout_ms">> => <<"infinite">>
+    }),
+    UserId = user(Admin, #{}, undefined),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := IId}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := OfferId}} = wait_data(offer_created),
+    %% no timeout fires — the offer is still pending well after any
+    %% finite timer would have been noise at this scale
+    ?assertEqual(timeout, wait_event(offer_timeout, 400)),
+    {ok, #{<<"pending_offers">> := [OfferId]}} = cx_router:get_session(Agent),
+    ok = cx_router:accept_offer(Agent, OfferId),
+    {ok, _} = wait_event(offer_accepted),
+    ok = cx_router:complete(Agent, IId),
     ok.
 
 admin(T) -> cx_authz:ctx(T, [<<"*">>]).

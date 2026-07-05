@@ -388,6 +388,7 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
                     <<"agent_id">> => AgentId
                 }
             ),
+            %% infinity = ring forever: gen_statem never arms the timer
             OfferTimeout = (Data1#qd.config)#cx_queue.offer_timeout_ms,
             {
                 Data1,
