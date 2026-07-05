@@ -19,7 +19,10 @@ auth_test_() ->
             fun() -> disabled_user(Keypair) end,
             fun() -> missing_tenant_claim(Keypair) end,
             fun garbage_tokens/0,
-            fun() -> crud_forbidden_without_permission(Keypair) end
+            fun() -> crud_forbidden_without_permission(Keypair) end,
+            fun jwks_http_options/0,
+            fun jwks_parse_keeps_duplicate_and_absent_kids/0,
+            fun() -> rotation_overlap_duplicate_kid_verifies(Keypair) end
         ]
     end}.
 
@@ -173,6 +176,74 @@ garbage_tokens() ->
         {error, unauthorized},
         cx_auth:authenticate(<<"Bearer still-not-a-jwt">>)
     ).
+
+%% Transport security matrix for the JWKS fetch: secure by default
+%% (verify_peer + OS CAs, plain http refused); the dev/test flag admits
+%% http and downgrades https to verify_none.
+jwks_http_options() ->
+    {ok, Secure} = cx_jwks_cache:http_options(<<"https://idp/keys">>, false),
+    {ssl, SslOpts} = lists:keyfind(ssl, 1, Secure),
+    ?assertEqual({verify, verify_peer}, lists:keyfind(verify, 1, SslOpts)),
+    ?assertMatch({cacerts, [_ | _]}, lists:keyfind(cacerts, 1, SslOpts)),
+    ?assertEqual(
+        {error, insecure_jwks_url},
+        cx_jwks_cache:http_options(<<"http://idp/keys">>, false)
+    ),
+    {ok, InsecureHttp} = cx_jwks_cache:http_options(<<"http://idp/keys">>, true),
+    ?assertEqual(false, lists:keyfind(ssl, 1, InsecureHttp)),
+    {ok, InsecureHttps} = cx_jwks_cache:http_options(<<"https://idp/keys">>, true),
+    {ssl, Insecure} = lists:keyfind(ssl, 1, InsecureHttps),
+    ?assertEqual({verify, verify_none}, lists:keyfind(verify, 1, Insecure)),
+    ?assertEqual(
+        {error, insecure_jwks_url},
+        cx_jwks_cache:http_options(<<"ftp://idp/keys">>, true)
+    ).
+
+%% Overlapping rotation may publish two keys under one kid, and some
+%% IdPs omit kid entirely — every published key must survive parsing.
+jwks_parse_keeps_duplicate_and_absent_kids() ->
+    #{public_map := P1} = cx_auth_test:new_keypair(),
+    #{public_map := P2} = cx_auth_test:new_keypair(),
+    #{public_map := P3} = cx_auth_test:new_keypair(),
+    Body = cx_json:encode(#{
+        <<"keys">> => [
+            P1#{<<"kid">> => <<"shared">>},
+            P2#{<<"kid">> => <<"shared">>},
+            maps:remove(<<"kid">>, P3)
+        ]
+    }),
+    {ok, Keys} = cx_jwks_cache:parse_jwks(Body),
+    ?assertEqual(3, length(Keys)),
+    ?assertEqual(
+        [<<"shared">>, <<"shared">>, undefined],
+        [Kid || {Kid, _} <- Keys]
+    ),
+    ?assertEqual({error, {invalid, json}}, cx_jwks_cache:parse_jwks(<<"nope">>)),
+    ?assertEqual({error, {invalid, json}}, cx_jwks_cache:parse_jwks(<<"{}">>)).
+
+%% End to end: two keys sharing a kid, token signed by the second —
+%% verification must try every candidate, not just the first.
+rotation_overlap_duplicate_kid_verifies(Keypair) ->
+    Rotated = cx_auth_test:new_keypair(),
+    #{public_map := OldPub, kid := Kid} = Keypair,
+    #{public_map := NewPub} = Rotated,
+    OldSource = application:get_env(cx_auth, key_source),
+    ok = application:set_env(
+        cx_auth,
+        key_source,
+        {static, [OldPub, NewPub#{<<"kid">> => Kid}]},
+        [{persistent, true}]
+    ),
+    try
+        Token = cx_auth_test:token(Rotated#{kid => Kid}, #{
+            <<"sub">> => <<"boss">>,
+            ?TENANT_CLAIM => <<"t1">>
+        }),
+        ?assertMatch({ok, _}, cx_auth:authenticate(Token))
+    after
+        {ok, Src} = OldSource,
+        ok = application:set_env(cx_auth, key_source, Src, [{persistent, true}])
+    end.
 
 crud_forbidden_without_permission(Keypair) ->
     T = cx_id:new(),
