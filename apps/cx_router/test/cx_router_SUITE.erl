@@ -677,8 +677,8 @@ backlog_drains_one_offer_per_pass(_Config) ->
     ?assertEqual(Ids, Drained),
     ok.
 
-%% offer_timeout_ms = "infinite": the queue never arms the offer timer,
-%% so the offer rings until the agent answers.
+%% offer_timeout_ms = 0 (ring forever): the queue never arms the offer
+%% timer, so the offer rings until the agent answers.
 infinite_ring_offer_stays_pending(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
@@ -687,7 +687,7 @@ infinite_ring_offer_stays_pending(_Config) ->
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0,
-        <<"offer_timeout_ms">> => <<"infinite">>
+        <<"offer_timeout_ms">> => 0
     }),
     UserId = user(Admin, #{}, undefined),
     Agent = start_agent(T, UserId),

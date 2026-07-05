@@ -309,8 +309,8 @@ queue_crud_and_skill_req_parsing() ->
         cx_queue:update(Ctx, Id, #{<<"status">> => <<"closed">>}),
     ok = cx_queue:delete(Ctx, Id).
 
-%% Defaults are applied at creation (not record defaults); ring time
-%% accepts <<"infinite">> and rejects zero/garbage.
+%% Defaults are applied at creation (not record defaults); ring time is
+%% integer-only on the wire — 0 means ring forever, garbage is rejected.
 queue_timeout_defaults_and_infinite_ring() ->
     T = cx_id:new(),
     Ctx = admin(T),
@@ -320,23 +320,23 @@ queue_timeout_defaults_and_infinite_ring() ->
         <<"wrapup_duration_ms">> := 30000
     }} =
         cx_queue:create(Ctx, #{<<"name">> => <<"defaults">>}),
-    %% infinite ring round-trips through update + read
-    {ok, #{<<"offer_timeout_ms">> := <<"infinite">>}} =
-        cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => <<"infinite">>}),
-    {ok, #{<<"offer_timeout_ms">> := <<"infinite">>}} = cx_queue:get(Ctx, Id),
+    %% 0 = infinite ring; round-trips through update + read
+    {ok, #{<<"offer_timeout_ms">> := 0}} =
+        cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => 0}),
+    {ok, #{<<"offer_timeout_ms">> := 0}} = cx_queue:get(Ctx, Id),
     %% and back to a finite value
     {ok, #{<<"offer_timeout_ms">> := 300}} =
         cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => 300}),
     Invalid = {error, {invalid, <<"offer_timeout_ms">>}},
-    ?assertEqual(Invalid, cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => 0})),
+    ?assertEqual(Invalid, cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => -1})),
     ?assertEqual(
         Invalid,
-        cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => <<"forever">>})
+        cx_queue:update(Ctx, Id, #{<<"offer_timeout_ms">> => <<"infinite">>})
     ),
-    {ok, #{<<"offer_timeout_ms">> := <<"infinite">>}} =
+    {ok, #{<<"offer_timeout_ms">> := 0}} =
         cx_queue:create(Ctx, #{
             <<"name">> => <<"patience">>,
-            <<"offer_timeout_ms">> => <<"infinite">>
+            <<"offer_timeout_ms">> => 0
         }),
     ok = cx_queue:delete(Ctx, Id).
 

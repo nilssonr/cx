@@ -72,7 +72,7 @@
     %% cx_queue:create/2, so every construction states its values and
     %% eqWAlizer rejects one that forgets
     wrapup_duration_ms :: non_neg_integer(),
-    %% ring time for an offer; infinity = ring forever
+    %% ring time for an offer; infinity = ring forever (0 on the wire)
     offer_timeout_ms :: pos_integer() | infinity,
     status = open :: open | closed
 }).

@@ -134,18 +134,19 @@ to_map(#cx_queue{
         <<"status">> => atom_to_binary(Status)
     }.
 
-%% Ring time: positive milliseconds, or <<"infinite">> to ring forever
-%% (the queue then never arms the offer timer). Zero is rejected — a
-%% 0 ms offer would expire before the agent could ever see it.
+%% Ring time in milliseconds; 0 means ring forever (the queue then
+%% never arms the offer timer). 0 is free to carry that meaning
+%% because a literal 0 ms offer could never be answered — internally
+%% it is stored as 'infinity' so the timer path needs no translation.
 opt_offer_timeout(Params, Default) ->
     case Params of
+        #{<<"offer_timeout_ms">> := 0} -> {ok, infinity};
         #{<<"offer_timeout_ms">> := V} when is_integer(V), V > 0 -> {ok, V};
-        #{<<"offer_timeout_ms">> := <<"infinite">>} -> {ok, infinity};
         #{<<"offer_timeout_ms">> := _} -> {error, {invalid, <<"offer_timeout_ms">>}};
         _ -> {ok, Default}
     end.
 
-offer_timeout_to_json(infinity) -> <<"infinite">>;
+offer_timeout_to_json(infinity) -> 0;
 offer_timeout_to_json(Ms) -> Ms.
 
 skill_req_to_map(#skill_req{
