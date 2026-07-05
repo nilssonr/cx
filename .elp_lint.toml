@@ -1,0 +1,13 @@
+# IDE-only lint config: the ELP language server reads this file
+# automatically, silencing W0051 (sigil string syntax) inline in
+# editors. The CLI gates are NOT affected — `elp lint` only reads this
+# file with --read-config, and both the local definition-of-done gate
+# and CI pass --diagnostic-ignore W0051 instead (the flag works across
+# the ELP builds in use; see CLAUDE.md).
+#
+# W0051 is a style non-decision: the codebase uses <<"...">>; adopting
+# ~"..." sigils would be a deliberate sweep
+# (elp lint --diagnostic-filter W0051 --apply-fix).
+
+[linters.W0051]
+enabled = false
