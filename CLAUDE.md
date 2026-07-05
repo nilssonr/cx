@@ -28,9 +28,12 @@ A change is done only when ALL of these pass:
     elp eqwalize-all                     # must end with "NO ERRORS"
     elp lint --diagnostic-ignore W0051   # must report no diagnostics
 
-W0051 (sigil string syntax) is ignored via the CLI flag, not a config
-file: the .elp_lint.toml schema differs between ELP builds in use
-(local vs CI), the flag works on both. It's a style non-decision — the
+W0051 (sigil string syntax) is ignored via the CLI flag on the gates:
+`elp lint` only reads .elp_lint.toml when given --read-config, so the
+flag is what the local gate and CI rely on — immune to schema drift
+between ELP builds. The checked-in .elp_lint.toml exists solely for
+the IDE: the language server auto-reads it and silences W0051 inline;
+it has no effect on the CLI gates. It's a style non-decision — the
 codebase uses <<"...">>; adopting ~"..." sigils would be a deliberate
 sweep (elp lint --diagnostic-filter W0051 --apply-fix).
 
