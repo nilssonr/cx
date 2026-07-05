@@ -15,7 +15,8 @@
     offer_event_targeted/1,
     presence_fanout_and_disconnect/1,
     expired_token_closes_socket/1,
-    disabled_user_closes_socket/1
+    disabled_user_closes_socket/1,
+    deactivated_user_presence_close/1
 ]).
 
 all() ->
@@ -27,7 +28,8 @@ all() ->
         offer_event_targeted,
         presence_fanout_and_disconnect,
         expired_token_closes_socket,
-        disabled_user_closes_socket
+        disabled_user_closes_socket,
+        deactivated_user_presence_close
     ].
 
 init_per_suite(Config) ->
@@ -188,6 +190,33 @@ disabled_user_closes_socket(Config) ->
         gun:close(Conn)
     after
         ok = application:set_env(cx_api_rest, ws_session_check_ms, 60000)
+    end.
+
+%% A deactivated user's socket must not retry presence registration
+%% forever: re-registration after the session dies hits the permanent
+%% forbidden and closes 4403 (instead of a 1 Hz retry loop).
+deactivated_user_presence_close(Config) ->
+    ok = application:set_env(cx_api_rest, ws_presence_retry_ms, 50),
+    try
+        T = cx_id:new(),
+        Admin = cx_authz:ctx(T, [<<"*">>]),
+        UserId = create_user(Admin, <<"Gone">>),
+        {Conn, Stream} = ws_auth(Config, T, UserId),
+        %% registration done: own online event proves the session exists
+        #{<<"data">> := #{<<"user_id">> := UserId, <<"state">> := <<"online">>}} =
+            ws_wait_event(Conn, Stream, <<"presence_changed">>, 3000),
+        {ok, _} = cx_user:update(Admin, UserId, #{<<"status">> => <<"disabled">>}),
+        %% kill the presence session: the socket's DOWN triggers a
+        %% re-registration, which now hits {error, forbidden}
+        SessPid =
+            case cx_reg:whereis_name({presence, T, UserId}) of
+                P when is_pid(P) -> P
+            end,
+        exit(SessPid, kill),
+        ?assertMatch({close, 4403, _}, ws_recv_close(Conn, Stream, 3000)),
+        gun:close(Conn)
+    after
+        ok = application:set_env(cx_api_rest, ws_presence_retry_ms, 1000)
     end.
 
 %% ---- helpers ----

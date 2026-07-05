@@ -8,8 +8,9 @@
 %% activity).
 %%
 %% Close codes: 4400 protocol violation, 4401 auth failed / token
-%% expired / session revoked, 4403 no agent identity, 4408 auth
-%% deadline, 4429 slow consumer.
+%% expired / session revoked, 4403 no agent identity / agent
+%% deactivated, 4408 auth deadline, 4429 slow consumer, 4503 presence
+%% unavailable (transient registration retries exhausted).
 %%
 %% First-frame auth is not forever: a session_check timer closes the
 %% socket when the token's exp passes and periodically re-resolves the
@@ -24,6 +25,8 @@
 
 %% server-side floor for activity reports; clients throttle to >= 30s
 -define(ACTIVITY_MIN_MS, 5000).
+%% transient presence-registration retries before giving up (4503)
+-define(PRESENCE_MAX_RETRIES, 5).
 
 -record(ws, {
     phase = unauth :: unauth | ready,
@@ -35,6 +38,8 @@
     device_id :: binary() | undefined,
     %% presence session pid + our monitor on it
     presence :: {pid(), reference()} | undefined,
+    %% consecutive failed registration attempts (reset on success)
+    presence_retries = 0 :: non_neg_integer(),
     ua :: binary() | undefined,
     peer :: inet:ip_address() | undefined,
     last_activity = 0 :: integer(),
@@ -94,7 +99,7 @@ websocket_info({timeout, _TRef, auth_deadline}, State) ->
     %% stale deadline that lost the cancel race after auth — ignore
     {[], State};
 websocket_info({timeout, _TRef, presence_retry}, State = #ws{phase = ready}) ->
-    {[], register_presence(State)};
+    register_presence(State);
 websocket_info(
     {timeout, TRef, session_check},
     State = #ws{phase = ready, session_tref = TRef, exp_ms = ExpMs, ctx = Ctx}
@@ -138,8 +143,9 @@ websocket_info({cx_event, {_T, QueueId, Media, Event}}, State = #ws{phase = read
     end;
 websocket_info({'DOWN', Ref, process, _Pid, _Reason}, State = #ws{presence = {_, Ref}}) ->
     %% presence session died: re-register after a beat (it is rebuilt
-    %% from live connections — us — by design)
-    _ = erlang:start_timer(1000, self(), presence_retry),
+    %% from live connections — us — by design); the retry budget was
+    %% reset when this registration succeeded
+    _ = schedule_presence_retry(),
     {[], State#ws{presence = undefined}};
 websocket_info(_Info, State) ->
     {[], State}.
@@ -179,7 +185,7 @@ authenticate(Token, DeviceId, State) ->
             %% subscribe BEFORE ready so no event can fall in the gap;
             %% the client resyncs current state via REST on connect
             ok = cx_event:subscribe(T),
-            State1 = register_presence(State#ws{
+            {Cmds, State1} = register_presence(State#ws{
                 phase = ready,
                 ctx = Ctx,
                 auth_tref = undefined,
@@ -189,7 +195,8 @@ authenticate(Token, DeviceId, State) ->
                 session_tref = schedule_session_check(ExpMs)
             }),
             Ready = cx_ws_proto:ready_frame(UserId, T, DeviceId),
-            {[{text, Ready}], State1}
+            %% ready first; a close command (if any) follows it in order
+            {[{text, Ready} | Cmds], State1}
     end.
 
 cancel_auth_timer(undefined) ->
@@ -205,7 +212,7 @@ schedule_session_check(ExpMs) ->
     Delay = max(0, min(Interval, ExpMs - cx_time:now_ms())),
     erlang:start_timer(Delay, self(), session_check).
 
-register_presence(State = #ws{ctx = Ctx}) ->
+register_presence(State = #ws{ctx = Ctx, presence_retries = N}) ->
     DeviceInfo = #{
         device_id => State#ws.device_id,
         user_agent => State#ws.ua,
@@ -213,12 +220,26 @@ register_presence(State = #ws{ctx = Ctx}) ->
     },
     case cx_presence:connected(Ctx, self(), DeviceInfo) of
         {ok, SessPid} ->
-            State#ws{presence = {SessPid, erlang:monitor(process, SessPid)}};
+            State1 = State#ws{
+                presence = {SessPid, erlang:monitor(process, SessPid)},
+                presence_retries = 0
+            },
+            {[], State1};
+        {error, Reason} when Reason =:= forbidden; Reason =:= no_user ->
+            %% permanent: the user lost their agent identity (e.g.
+            %% deactivated mid-connection) — retrying can never succeed
+            {[{close, 4403, <<"forbidden">>}], State};
+        {error, _Transient} when N < ?PRESENCE_MAX_RETRIES ->
+            %% a lost session race — retry, but bounded
+            _ = schedule_presence_retry(),
+            {[], State#ws{presence = undefined, presence_retries = N + 1}};
         {error, _} ->
-            %% presence must never take the event channel down — retry
-            _ = erlang:start_timer(1000, self(), presence_retry),
-            State#ws{presence = undefined}
+            {[{close, 4503, <<"presence_unavailable">>}], State}
     end.
+
+schedule_presence_retry() ->
+    RetryMs = cx_cfg:get(cx_api_rest, ws_presence_retry_ms, 1000),
+    erlang:start_timer(RetryMs, self(), presence_retry).
 
 report_activity(State = #ws{last_activity = Last}) ->
     Now = cx_time:now_ms(),
