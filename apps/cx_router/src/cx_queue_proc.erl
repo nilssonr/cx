@@ -122,7 +122,8 @@ recover(Data = #qd{tenant = TenantId, queue_id = QueueId}) ->
                 enqueued_at = Rec#cx_interaction.enqueued_at,
                 seq = Rec#cx_interaction.seq
             },
-            {insert_item(Item, Acc), Actions ++ widen_actions(Item, Now)}
+            %% prepend: uniquely-named timeouts, order-free (see try_route)
+            {insert_item(Item, Acc), widen_actions(Item, Now) ++ Actions}
         end,
         {Data#qd{seq = next_seq(Recs)}, []},
         Recs
@@ -185,9 +186,8 @@ handle_event({call, From}, {cancel, IId}, _S, Data) ->
             {keep_state_and_data, [{reply, From, {error, not_cancellable}}]}
     end;
 handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
-    case maps:take(OfferId, Data#qd.offers) of
-        {Offer = #qoffer{item = Item}, Offers} ->
-            erlang:demonitor(Offer#qoffer.mon_ref, [flush]),
+    case take_offer(OfferId, Data) of
+        {Offer = #qoffer{item = Item}, Data0} ->
             IId = Item#witem.interaction_id,
             ok = cx_store:tx(fun() ->
                 [Rec] = mnesia:read(cx_interaction, {Data#qd.tenant, IId}),
@@ -198,9 +198,8 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
                 })
             end),
             gen_statem:cast(Offer#qoffer.agent_pid, {offer_accepted, OfferId}),
-            Data1 = Data#qd{offers = Offers},
             publish(
-                Data1,
+                Data0,
                 Item#witem.media,
                 offer_accepted,
                 #{
@@ -209,20 +208,22 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
                     <<"agent_id">> => Offer#qoffer.agent_id
                 }
             ),
-            {keep_state, Data1, [{reply, From, ok}, {{timeout, {offer, OfferId}}, cancel}]};
+            %% wake routing: each pass offers an agent at most once, so
+            %% a multi-capacity agent gets the next waiting item from a
+            %% fresh pass
+            {keep_state, Data0, [
+                {reply, From, ok},
+                {{timeout, {offer, OfferId}}, cancel},
+                {next_event, internal, route}
+            ]};
         error ->
             {keep_state_and_data, [{reply, From, {error, expired}}]}
     end;
 handle_event({call, From}, {rejected, OfferId}, _S, Data) ->
-    case maps:take(OfferId, Data#qd.offers) of
-        {Offer, Offers} ->
+    case take_offer(OfferId, Data) of
+        {Offer, Data0} ->
             gen_statem:cast(Offer#qoffer.agent_pid, {offer_withdrawn, OfferId}),
-            Data1 = requeue(
-                Offer,
-                _Penalize = true,
-                offer_rejected,
-                Data#qd{offers = Offers}
-            ),
+            Data1 = requeue(Offer, _Penalize = true, offer_rejected, Data0),
             {keep_state, Data1, [
                 {reply, From, ok},
                 {{timeout, {offer, OfferId}}, cancel},
@@ -233,14 +234,9 @@ handle_event({call, From}, {rejected, OfferId}, _S, Data) ->
     end;
 %% a stopping agent session hands its pending offers back asynchronously
 handle_event(cast, {reject_cast, OfferId}, _S, Data) ->
-    case maps:take(OfferId, Data#qd.offers) of
-        {Offer, Offers} ->
-            Data1 = requeue(
-                Offer,
-                true,
-                offer_rejected,
-                Data#qd{offers = Offers}
-            ),
+    case take_offer(OfferId, Data) of
+        {Offer, Data0} ->
+            Data1 = requeue(Offer, true, offer_rejected, Data0),
             {keep_state, Data1, [
                 {{timeout, {offer, OfferId}}, cancel},
                 {next_event, internal, route}
@@ -249,16 +245,10 @@ handle_event(cast, {reject_cast, OfferId}, _S, Data) ->
             keep_state_and_data
     end;
 handle_event({timeout, {offer, OfferId}}, _Content, _S, Data) ->
-    case maps:take(OfferId, Data#qd.offers) of
-        {Offer, Offers} ->
-            erlang:demonitor(Offer#qoffer.mon_ref, [flush]),
+    case take_offer(OfferId, Data) of
+        {Offer, Data0} ->
             gen_statem:cast(Offer#qoffer.agent_pid, {offer_withdrawn, OfferId}),
-            Data1 = requeue(
-                Offer,
-                true,
-                offer_timeout,
-                Data#qd{offers = Offers}
-            ),
+            Data1 = requeue(Offer, true, offer_timeout, Data0),
             {keep_state, Data1, [{next_event, internal, route}]};
         error ->
             keep_state_and_data
@@ -302,21 +292,29 @@ handle_event(_Type, _Event, _S, _Data) ->
 %% ---- routing pass ----
 
 %% Returns {Data, Actions} — the actions arm one offer timeout per offer
-%% placed during this pass.
+%% placed during this pass. The snapshots are taken once per pass, so an
+%% agent already given an offer THIS pass is excluded from later items
+%% (the snapshot no longer reflects their pending offer); the accept
+%% handler re-triggers routing, so spare capacity is picked up by the
+%% next pass with fresh snapshots. Actions are uniquely-named generic
+%% timeouts, so accumulation order is irrelevant — prepend, don't append
+%% (appending is quadratic in offers placed).
 try_route(Data = #qd{tenant = TenantId}) ->
     Now = cx_time:now_ms(),
     Snapshots = agent_snapshots(TenantId),
     Items = [Item || {_, Item} <- gb_trees:to_list(Data#qd.waiting)],
-    lists:foldl(
-        fun(Item, {Acc, Actions}) ->
-            {Acc1, ItemActions} = route_item(Item, Snapshots, Now, Acc),
-            {Acc1, Actions ++ ItemActions}
+    {Data1, Actions, _Offered} = lists:foldl(
+        fun(Item, {Acc, Actions, Offered}) ->
+            {Acc1, ItemActions, Offered1} =
+                route_item(Item, Snapshots, Now, Acc, Offered),
+            {Acc1, ItemActions ++ Actions, Offered1}
         end,
-        {Data, []},
+        {Data, [], #{}},
         Items
-    ).
+    ),
+    {Data1, Actions}.
 
-route_item(Item, Snapshots, Now, Data) ->
+route_item(Item, Snapshots, Now, Data, Offered) ->
     Reqs = cx_routing:effective_requirements(
         Item#witem.skill_reqs,
         Now - Item#witem.enqueued_at
@@ -332,13 +330,14 @@ route_item(Item, Snapshots, Now, Data) ->
         not lists:member(
             maps:get(agent_id, S),
             Item#witem.offered_to
-        )
+        ),
+        not is_map_key(maps:get(agent_id, S), Offered)
     ],
-    offer_to_first(cx_routing:rank(Reqs, Eligible), Item, Data).
+    offer_to_first(cx_routing:rank(Reqs, Eligible), Item, Data, Offered).
 
-offer_to_first([], _Item, Data) ->
-    {Data, []};
-offer_to_first([Snapshot | Rest], Item, Data) ->
+offer_to_first([], _Item, Data, Offered) ->
+    {Data, [], Offered};
+offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
     #{agent_id := AgentId, pid := AgentPid} = Snapshot,
     OfferId = cx_id:new(),
     IId = Item#witem.interaction_id,
@@ -390,9 +389,13 @@ offer_to_first([Snapshot | Rest], Item, Data) ->
                 }
             ),
             OfferTimeout = (Data1#qd.config)#cx_queue.offer_timeout_ms,
-            {Data1, [{{timeout, {offer, OfferId}}, OfferTimeout, expire}]};
+            {
+                Data1,
+                [{{timeout, {offer, OfferId}}, OfferTimeout, expire}],
+                Offered#{AgentId => true}
+            };
         {error, not_routable} ->
-            offer_to_first(Rest, Item, Data)
+            offer_to_first(Rest, Item, Data, Offered)
     end.
 
 stale_snapshot(TenantId, AgentId, DeadPid) ->
@@ -406,6 +409,19 @@ stale_snapshot(TenantId, AgentId, DeadPid) ->
     {error, not_routable}.
 
 %% ---- helpers ----
+
+%% Remove a live offer, always releasing its monitor — every resolution
+%% path (accept, reject, timeout) must demonitor or the queue leaks one
+%% monitor per resolved offer. The 'DOWN' handler is the one exception:
+%% its monitor already fired.
+take_offer(OfferId, Data) ->
+    case maps:take(OfferId, Data#qd.offers) of
+        {Offer, Offers} ->
+            erlang:demonitor(Offer#qoffer.mon_ref, [flush]),
+            {Offer, Data#qd{offers = Offers}};
+        error ->
+            error
+    end.
 
 insert_item(Item = #witem{enqueued_at = At, seq = Seq}, Data) ->
     Key = {At, Seq},

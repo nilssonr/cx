@@ -57,10 +57,17 @@ init([]) ->
 
 handle_call({register, Name, Pid}, _From, Refs) ->
     case ets:lookup(?TAB, Name) of
-        [{_, OldPid, _}] when OldPid =/= Pid ->
+        [{_, OldPid, OldRef}] when OldPid =/= Pid ->
             case is_process_alive(OldPid) of
-                true -> {reply, no, Refs};
-                false -> {reply, yes, do_register(Name, Pid, Refs)}
+                true ->
+                    {reply, no, Refs};
+                false ->
+                    %% the owner died but its DOWN is still in our
+                    %% mailbox: release the old monitor NOW (flush eats
+                    %% the queued DOWN) or that DOWN would later wipe
+                    %% the new registration
+                    erlang:demonitor(OldRef, [flush]),
+                    {reply, yes, do_register(Name, Pid, maps:remove(OldRef, Refs))}
             end;
         [{_, Pid, _}] ->
             {reply, yes, Refs};
@@ -80,10 +87,12 @@ handle_call({unregister, Name}, _From, Refs) ->
 handle_cast(_Msg, Refs) ->
     {noreply, Refs}.
 
-handle_info({'DOWN', Ref, process, _Pid, _Reason}, Refs) ->
+handle_info({'DOWN', Ref, process, Pid, _Reason}, Refs) ->
     case maps:take(Ref, Refs) of
         {Name, Rest} ->
-            ets:delete(?TAB, Name),
+            %% delete only the exact row this monitor created — if the
+            %% name was re-registered meanwhile, the live row survives
+            true = ets:delete_object(?TAB, {Name, Pid, Ref}),
             {noreply, Rest};
         error ->
             {noreply, Refs}

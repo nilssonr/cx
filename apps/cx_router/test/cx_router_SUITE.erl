@@ -19,7 +19,9 @@
     wrapup_extend_cancel/1,
     stop_session_rules/1,
     dangling_profile_fails_closed/1,
-    facade_permissions/1
+    facade_permissions/1,
+    reject_releases_monitor/1,
+    backlog_drains_one_offer_per_pass/1
 ]).
 
 all() ->
@@ -37,7 +39,9 @@ all() ->
         wrapup_extend_cancel,
         stop_session_rules,
         dangling_profile_fails_closed,
-        facade_permissions
+        facade_permissions,
+        reject_releases_monitor,
+        backlog_drains_one_offer_per_pass
     ].
 
 init_per_suite(Config) ->
@@ -584,6 +588,92 @@ facade_permissions(_Config) ->
     ok.
 
 %% ---- helpers ----
+
+%% Every offer resolution path must release the queue's monitor on the
+%% agent session — a long-lived queue must not accumulate one dangling
+%% monitor per reject.
+reject_releases_monitor(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{<<"name">> => <<"q">>, <<"wrapup_duration_ms">> => 0}),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, _} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := OfferId}} = wait_data(offer_created),
+    QueuePid =
+        case cx_reg:whereis_name({queue, T, QueueId}) of
+            P when is_pid(P) -> P
+        end,
+    ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),
+
+    %% explicit reject (the {rejected, _} call path)
+    ok = cx_router:reject_offer(AgentA, OfferId),
+    {ok, _} = wait_event(offer_rejected),
+    _ = sys:get_state(QueuePid),
+    ?assertEqual({monitors, []}, erlang:process_info(QueuePid, monitors)),
+
+    %% reject_cast path: a second agent takes the re-offer, then stops,
+    %% handing the pending offer back asynchronously
+    UserB = user(Admin, #{}, undefined),
+    AgentB = start_agent(T, UserB),
+    ok = cx_router:set_ready(AgentB, Media, ready),
+    {ok, #{<<"offer_id">> := _}} = wait_data(offer_created),
+    _ = sys:get_state(QueuePid),
+    ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),
+    ok = cx_router:stop_session(AgentB),
+    {ok, _} = wait_event(offer_rejected),
+    _ = sys:get_state(QueuePid),
+    ?assertEqual({monitors, []}, erlang:process_info(QueuePid, monitors)),
+    ok.
+
+%% A routing pass offers each agent at most once (the snapshot cannot
+%% see offers placed in the same pass); the accept handler wakes the
+%% next pass, so a backlog drains in order — one live offer at a time.
+backlog_drains_one_offer_per_pass(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{<<"name">> => <<"q">>, <<"wrapup_duration_ms">> => 0}),
+    Integrator = integrator(T),
+    Ids = [
+        begin
+            {ok, #{<<"id">> := I}} =
+                cx_router:create_interaction(
+                    Integrator,
+                    #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+                ),
+            I
+        end
+     || _ <- [1, 2, 3]
+    ],
+    %% nobody ready: the backlog just waits
+    ?assertEqual(timeout, wait_event(offer_created, 300)),
+    UserId = user(Admin, #{}, undefined),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+    Drained = lists:map(
+        fun(_) ->
+            {ok, #{<<"offer_id">> := O, <<"interaction_id">> := I}} =
+                wait_data(offer_created),
+            %% at most one offer per pass — nothing else until we accept
+            ?assertEqual(timeout, wait_event(offer_created, 200)),
+            ok = cx_router:accept_offer(Agent, O),
+            {ok, _} = wait_event(offer_accepted),
+            I
+        end,
+        [1, 2, 3]
+    ),
+    ?assertEqual(Ids, Drained),
+    ok.
 
 admin(T) -> cx_authz:ctx(T, [<<"*">>]).
 

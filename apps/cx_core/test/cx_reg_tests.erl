@@ -17,6 +17,7 @@ reg_test_() ->
                 fun register_whereis_unregister/0,
                 fun duplicate_name_refused/0,
                 fun cleanup_on_death/0,
+                fun dead_owner_reregister_race/0,
                 fun via_tuple_works/0
             ]
         end}.
@@ -51,6 +52,27 @@ cleanup_on_death() ->
     ?assertEqual(yes, cx_reg:register_name(Name, Reborn)),
     ok = cx_reg:unregister_name(Name),
     stop_idle(Reborn).
+
+%% Regression: the old owner died but its DOWN was still queued when
+%% the name was re-registered — that stale DOWN must not wipe the new
+%% registration. Suspending cx_reg lets us fix the mailbox order:
+%% register call first (enqueued while suspended), then the DOWN.
+dead_owner_reregister_race() ->
+    Name = {agent, <<"t1">>, <<"race">>},
+    A = spawn_idle(),
+    B = spawn_idle(),
+    yes = cx_reg:register_name(Name, A),
+    ok = sys:suspend(cx_reg),
+    ReqId = gen_server:send_request(cx_reg, {register, Name, B}),
+    exit(A, kill),
+    wait_until(fun() -> not is_process_alive(A) end),
+    ok = sys:resume(cx_reg),
+    {reply, yes} = gen_server:wait_response(ReqId, 1000),
+    %% served after any (unflushed) DOWN would have been processed
+    _ = sys:get_state(cx_reg),
+    ?assertEqual(B, cx_reg:whereis_name(Name)),
+    ok = cx_reg:unregister_name(Name),
+    stop_idle(B).
 
 via_tuple_works() ->
     Name = {queue, <<"t1">>, <<"via">>},
