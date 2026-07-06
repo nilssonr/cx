@@ -30,6 +30,8 @@
     supervisor_force_overrides_qualification/1,
     force_sign_out_flips_row_without_queue/1,
     requeue_clears_prior_engagement_fields/1,
+    queue_recover_reconciles_stranded_engaged/1,
+    queue_recover_completes_stranded_wrapup/1,
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
@@ -63,6 +65,8 @@ all() ->
         supervisor_force_overrides_qualification,
         force_sign_out_flips_row_without_queue,
         requeue_clears_prior_engagement_fields,
+        queue_recover_reconciles_stranded_engaged,
+        queue_recover_completes_stranded_wrapup,
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
@@ -1200,6 +1204,116 @@ requeue_clears_prior_engagement_fields(_Config) ->
         <<"qualification_ids">> := []
     }} = cx_router:get_interaction(Integrator, I1),
     ok = cx_router:stop_session(AgentB),
+    ok.
+
+%% A session crash leaves its active row stranded (the queue only
+%% monitors sessions mid-offer); the queue's recovery reconciles rows
+%% whose agent has no live session — engaged work returns to the
+%% backlog scrubbed, and gets served again.
+queue_recover_reconciles_stranded_engaged(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+
+    SessionPid =
+        case cx_registry:whereis_name({agent, T, UserA}) of
+            P when is_pid(P) -> P
+        end,
+    exit(SessionPid, kill),
+
+    OldQueuePid =
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            Q when is_pid(Q) -> Q
+        end,
+    exit(OldQueuePid, kill),
+    ok = wait_until(fun() ->
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            undefined -> false;
+            Pid -> Pid =/= OldQueuePid
+        end
+    end),
+
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserA}} =
+        wait_data(interaction_requeued, 2000),
+    {ok, #{
+        <<"state">> := <<"queued">>,
+        <<"agent_id">> := null,
+        <<"qualification_ids">> := []
+    }} = cx_router:get_interaction(Integrator, I1),
+
+    UserB = user(Admin, #{}, undefined),
+    AgentB = start_agent(T, UserB),
+    ok = cx_router:set_ready(AgentB, Media, ready),
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserB}} =
+        wait_data(offer_created, 2000),
+    ok.
+
+%% A session crash during ACW stranded the wrapup row forever (the
+%% terminal write happens at finalize time). Recovery completes it —
+%% deliberately past the qualification gate: nobody can enter codes for
+%% a dead session, and a phantom slot held forever is worse.
+queue_recover_completes_stranded_wrapup(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 60000,
+        <<"qualification_required">> => true
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(AgentA, I1),
+    {ok, _} = wait_event(wrapup_started),
+
+    SessionPid =
+        case cx_registry:whereis_name({agent, T, UserA}) of
+            P when is_pid(P) -> P
+        end,
+    exit(SessionPid, kill),
+
+    OldQueuePid =
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            Q when is_pid(Q) -> Q
+        end,
+    exit(OldQueuePid, kill),
+    ok = wait_until(fun() ->
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            undefined -> false;
+            Pid -> Pid =/= OldQueuePid
+        end
+    end),
+
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserA}} =
+        wait_data(interaction_completed, 2000),
+    {ok, #{<<"state">> := <<"completed">>}} =
+        cx_router:get_interaction(Integrator, I1),
     ok.
 
 %% A configured-but-missing routing profile must refuse the session —

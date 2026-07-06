@@ -87,31 +87,45 @@ init([TenantId, QueueId]) ->
 %% Rebuild waiting state from Mnesia: queued and offered interactions are
 %% re-enqueued under their preserved {enqueued_at, sequence} keys (an offer
 %% that was live when we died simply degrades to "requeued at original
-%% position").
+%% position"). Rows still marked engaged or in wrap-up under an agent with
+%% no live session are reconciled here too: engaged work returns to the
+%% backlog scrubbed of its dead engagement, wrap-up work completes.
+%% The qualification gate deliberately does not hold for the dead
+%% session's ACW — nobody can enter codes for it, and a phantom slot
+%% held forever is worse; this is the reconciliation-time equivalent of
+%% the supervisor override.
+%%
+%% Open gap: this runs only at queue start. An agent session dying
+%% abnormally while its queue stays up strands its engaged/ACW rows until
+%% the queue next restarts; healing that live needs per-agent post-accept
+%% monitors ('DOWN' → reconcile that agent's rows) — a stated follow-up.
 recover(Data = #queue_state{tenant = TenantId, queue_id = QueueId}) ->
-    Recs = cx_store:tx(fun() ->
+    {Recs, Reconciled} = cx_store:tx(fun() ->
         Found = mnesia:index_read(
             cx_interaction,
             {TenantId, QueueId},
             #cx_interaction.queue_key
         ),
-        lists:filtermap(
-            fun
-                (Rec = #cx_interaction{state = queued}) ->
-                    {true, Rec};
-                (Rec = #cx_interaction{state = offered}) ->
-                    Rec1 = Rec#cx_interaction{
-                        state = queued,
-                        agent_id = undefined
-                    },
-                    ok = mnesia:write(Rec1),
-                    {true, Rec1};
-                (_) ->
-                    false
+        lists:foldr(
+            fun(Rec, {Keep, Events}) ->
+                case reconcile_row(TenantId, Rec) of
+                    {keep, Rec1, Event} -> {[Rec1 | Keep], Event ++ Events};
+                    {drop, Event} -> {Keep, Event ++ Events}
+                end
             end,
+            {[], []},
             Found
         )
     end),
+    lists:foreach(
+        fun({Type, Media, PrevAgent, InteractionId}) ->
+            publish(Data, Media, Type, #{
+                <<"interaction_id">> => InteractionId,
+                <<"agent_id">> => PrevAgent
+            })
+        end,
+        Reconciled
+    ),
     Now = cx_time:now_ms(),
     lists:foldl(
         fun(Rec, {Acc, Actions}) ->
@@ -128,6 +142,57 @@ recover(Data = #queue_state{tenant = TenantId, queue_id = QueueId}) ->
         {Data#queue_state{sequence = next_sequence(Recs)}, []},
         Recs
     ).
+
+%% Runs inside the recovery transaction. keep = rebuild a waiting item;
+%% drop = not ours to serve. The event element narrates any transition
+%% written here (published after the transaction commits).
+reconcile_row(_TenantId, Rec = #cx_interaction{state = queued}) ->
+    {keep, Rec, []};
+reconcile_row(_TenantId, Rec = #cx_interaction{state = offered}) ->
+    Rec1 = Rec#cx_interaction{
+        state = queued,
+        agent_id = undefined
+    },
+    ok = mnesia:write(Rec1),
+    {keep, Rec1, []};
+reconcile_row(TenantId, Rec = #cx_interaction{state = State, agent_id = AgentId}) when
+    State =:= active; State =:= held; State =:= wrapup
+->
+    InteractionId = element(2, Rec#cx_interaction.key),
+    case agent_session_alive(TenantId, AgentId) of
+        true ->
+            %% the live session owns the row
+            {drop, []};
+        false when State =:= wrapup ->
+            ok = mnesia:write(Rec#cx_interaction{
+                state = completed,
+                completed_at = cx_time:now_ms()
+            }),
+            {drop, [
+                {interaction_completed, Rec#cx_interaction.media_type, AgentId, InteractionId}
+            ]};
+        false ->
+            Rec1 = Rec#cx_interaction{
+                state = queued,
+                agent_id = undefined,
+                accepted_at = undefined,
+                qualification_ids = [],
+                wrapup_started_at = undefined,
+                wrapup_until = undefined
+            },
+            ok = mnesia:write(Rec1),
+            {keep, Rec1, [
+                {interaction_requeued, Rec#cx_interaction.media_type, AgentId, InteractionId}
+            ]}
+    end;
+reconcile_row(_TenantId, _Rec) ->
+    %% terminal states (completed | cancelled) stay untouched
+    {drop, []}.
+
+%% Local registry lookup — single node today; when clustering arrives
+%% (syn), this helper is the one place session liveness changes.
+agent_session_alive(TenantId, AgentId) ->
+    is_pid(cx_registry:whereis_name({agent, TenantId, AgentId})).
 
 next_sequence([]) -> 0;
 next_sequence(Recs) -> lists:max([R#cx_interaction.sequence || R <- Recs]) + 1.
