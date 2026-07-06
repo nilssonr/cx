@@ -10,12 +10,12 @@
 profile() ->
     profile(unlimited, #{}, []).
 
-profile(MaxTotal, Caps, Guards) ->
+profile(MaxTotal, Capacities, Guards) ->
     #cx_routing_profile{
         key = {<<"t">>, <<"p">>},
         name = <<"p">>,
         max_total = MaxTotal,
-        media_caps = Caps,
+        media_capacities = Capacities,
         guards = Guards
     }.
 
@@ -37,7 +37,7 @@ media_cap_test() ->
 
 guard_test() ->
     %% "If I am already handling one phone call, don't route me chats or emails"
-    G = #rp_guard{when_media = ?VOICE, gte = 1, block = [?CHAT, ?EMAIL]},
+    G = #routing_profile_guard{when_media = ?VOICE, at_least = 1, block = [?CHAT, ?EMAIL]},
     P = profile(unlimited, #{}, [G]),
     ?assertNot(cx_routing:can_route(P, #{?VOICE => 1}, ?CHAT)),
     ?assertNot(cx_routing:can_route(P, #{?VOICE => 1}, ?EMAIL)),
@@ -47,13 +47,13 @@ guard_test() ->
 
 guard_threshold_test() ->
     %% "If I'm handling more than two emails, do not route me chats"
-    G = #rp_guard{when_media = ?EMAIL, gte = 3, block = [?CHAT]},
+    G = #routing_profile_guard{when_media = ?EMAIL, at_least = 3, block = [?CHAT]},
     P = profile(unlimited, #{}, [G]),
     ?assert(cx_routing:can_route(P, #{?EMAIL => 2}, ?CHAT)),
     ?assertNot(cx_routing:can_route(P, #{?EMAIL => 3}, ?CHAT)).
 
 effective_requirements_test() ->
-    Req = #skill_req{
+    Req = #skill_requirement{
         skill_id = <<"s1">>,
         min_rank = 3,
         widening = [{30000, 2}, {60000, 1}]
@@ -78,7 +78,6 @@ snapshot(Id, Overrides) ->
             pid => self(),
             ready => #{?CHAT => ready},
             mix => #{},
-            wrapup_until => 0,
             skills => #{},
             profile => profile(),
             idle_since => 0
@@ -94,12 +93,8 @@ routable_test() ->
     %% explicitly not ready
     NotReady = snapshot(<<"a">>, #{ready => #{?CHAT => {not_ready, <<"lunch">>}}}),
     ?assertNot(cx_routing:routable(NotReady, ?CHAT, Now)),
-    %% in wrap-up
-    InWrapup = snapshot(<<"a">>, #{wrapup_until => Now + 1}),
-    ?assertNot(cx_routing:routable(InWrapup, ?CHAT, Now)),
-    WrapupOver = snapshot(<<"a">>, #{wrapup_until => Now}),
-    ?assert(cx_routing:routable(WrapupOver, ?CHAT, Now)),
-    %% profile denies
+    %% profile denies — this is also how after-call work gates routing:
+    %% a wrapup-phase interaction occupies its slot in the mix
     Full = snapshot(<<"a">>, #{
         profile => profile(1, #{}, []),
         mix => #{?CHAT => 1}

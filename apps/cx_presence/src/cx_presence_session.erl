@@ -2,11 +2,11 @@
 
 %% One gen_statem per user with at least one live connection. Owns the
 %% connectivity observations (device pids, last activity) and the
-%% presence timers; everything durable lives in cx_presence_decl.
+%% presence timers; everything durable lives in cx_presence_declaration.
 %%
 %% Invariants:
 %%   - this process exists  <=>  the user has >= 1 live connection
-%%   - a cx_presence_eff row exists  <=>  this process owns it
+%%   - a cx_presence_effective row exists  <=>  this process owns it
 %% The last disconnect publishes offline and stops immediately (no
 %% linger) — flap dampening is the transport's reconnect concern, and
 %% consumers must tolerate offline/online pairs anyway (crash recovery
@@ -26,12 +26,12 @@
 %% erlang timers cap at 2^32-1 ms (~49.7 days); longer `until`s re-arm.
 -define(MAX_TIMER_MS, 4294967295).
 
--record(pd, {
+-record(presence_session, {
     tenant :: binary(),
     user_id :: binary(),
-    %% ConnPid => {MonRef, DeviceInfo}
-    conns = #{} :: #{pid() => {reference(), map()}},
-    declared :: cx_presence_calc:declared(),
+    %% ConnectionPid => {MonitorRef, DeviceInfo}
+    connections = #{} :: #{pid() => {reference(), map()}},
+    declared :: cx_presence_calculation:declared(),
     last_activity :: integer(),
     %% last published {State, Message}; undefined forces first publish
     last_effective :: {binary(), binary() | undefined} | undefined
@@ -39,7 +39,7 @@
 
 start_link(TenantId, UserId) ->
     gen_statem:start_link(
-        {via, cx_reg, {presence, TenantId, UserId}},
+        {via, cx_registry, {presence, TenantId, UserId}},
         ?MODULE,
         [TenantId, UserId],
         []
@@ -48,7 +48,7 @@ start_link(TenantId, UserId) ->
 callback_mode() -> handle_event_function.
 
 init([TenantId, UserId]) ->
-    Data = #pd{
+    Data = #presence_session{
         tenant = TenantId,
         user_id = UserId,
         declared = read_declared(TenantId, UserId),
@@ -56,33 +56,35 @@ init([TenantId, UserId]) ->
     },
     {ok, active, Data}.
 
-handle_event({call, From}, {connected, ConnPid, DeviceInfo}, _S, Data) ->
-    Conns0 = Data#pd.conns,
-    Conns1 =
-        case maps:take(ConnPid, Conns0) of
+handle_event({call, From}, {connected, ConnectionPid, DeviceInfo}, _S, Data) ->
+    Connections0 = Data#presence_session.connections,
+    Connections1 =
+        case maps:take(ConnectionPid, Connections0) of
             {{OldRef, _}, Rest} ->
                 erlang:demonitor(OldRef, [flush]),
                 Rest;
             error ->
-                Conns0
+                Connections0
         end,
-    MonRef = erlang:monitor(process, ConnPid),
-    Data1 = Data#pd{
-        conns = Conns1#{ConnPid => {MonRef, DeviceInfo}},
+    MonitorRef = erlang:monitor(process, ConnectionPid),
+    Data1 = Data#presence_session{
+        connections = Connections1#{ConnectionPid => {MonitorRef, DeviceInfo}},
         last_activity = cx_time:now_ms()
     },
     {Data2, Actions} = recompute(Data1),
     {keep_state, Data2, [{reply, From, ok} | Actions]};
-handle_event(cast, {disconnected, ConnPid}, _S, Data) ->
-    drop_conn(ConnPid, Data);
-handle_event(info, {'DOWN', _Ref, process, ConnPid, _Reason}, _S, Data) ->
-    drop_conn(ConnPid, Data);
+handle_event(cast, {disconnected, ConnectionPid}, _S, Data) ->
+    drop_connection(ConnectionPid, Data);
+handle_event(info, {'DOWN', _Ref, process, ConnectionPid, _Reason}, _S, Data) ->
+    drop_connection(ConnectionPid, Data);
 handle_event(cast, {activity, NowMs}, _S, Data) ->
-    Data1 = Data#pd{last_activity = max(Data#pd.last_activity, NowMs)},
+    Data1 = Data#presence_session{last_activity = max(Data#presence_session.last_activity, NowMs)},
     {Data2, Actions} = recompute(Data1),
     {keep_state, Data2, Actions};
 handle_event({call, From}, refresh_declared, _S, Data) ->
-    Data1 = Data#pd{declared = read_declared(Data#pd.tenant, Data#pd.user_id)},
+    Data1 = Data#presence_session{
+        declared = read_declared(Data#presence_session.tenant, Data#presence_session.user_id)
+    },
     {Data2, Actions} = recompute(Data1),
     {keep_state, Data2, [{reply, From, ok} | Actions]};
 handle_event({timeout, away}, check, _S, Data) ->
@@ -98,7 +100,9 @@ handle_event(_Type, _Event, _S, _Data) ->
 
 terminate(_Reason, _State, Data) ->
     try
-        mnesia:dirty_delete(cx_presence_eff, {Data#pd.tenant, Data#pd.user_id})
+        mnesia:dirty_delete(cx_presence_effective, {
+            Data#presence_session.tenant, Data#presence_session.user_id
+        })
     catch
         _:_ -> ok
     end,
@@ -106,13 +110,13 @@ terminate(_Reason, _State, Data) ->
 
 %% ---- internals ----
 
-drop_conn(ConnPid, Data) ->
-    case maps:take(ConnPid, Data#pd.conns) of
+drop_connection(ConnectionPid, Data) ->
+    case maps:take(ConnectionPid, Data#presence_session.connections) of
         error ->
             keep_state_and_data;
-        {{MonRef, _}, Rest} ->
-            erlang:demonitor(MonRef, [flush]),
-            Data1 = Data#pd{conns = Rest},
+        {{MonitorRef, _}, Rest} ->
+            erlang:demonitor(MonitorRef, [flush]),
+            Data1 = Data#presence_session{connections = Rest},
             case map_size(Rest) of
                 0 ->
                     %% last device gone: publish offline, drop the eff
@@ -127,35 +131,41 @@ drop_conn(ConnPid, Data) ->
 
 read_declared(TenantId, UserId) ->
     Row =
-        case mnesia:dirty_read(cx_presence_decl, {TenantId, UserId}) of
+        case mnesia:dirty_read(cx_presence_declaration, {TenantId, UserId}) of
             [R] -> R;
             [] -> undefined
         end,
-    cx_presence_calc:from_row(Row).
+    cx_presence_calculation:from_row(Row).
 
 %% The single choke point: pure calc -> eff-row write -> publish iff
 %% changed -> re-arm timers. (Future presence->readiness tenant policy
 %% hooks here.)
-recompute(Data = #pd{tenant = T, user_id = U}) ->
+recompute(Data = #presence_session{tenant = T, user_id = U}) ->
     Now = cx_time:now_ms(),
     Threshold = cx_presence:away_threshold_ms(),
-    DeviceCount = map_size(Data#pd.conns),
+    DeviceCount = map_size(Data#presence_session.connections),
     #{state := State, message := Message} =
-        cx_presence_calc:effective(
-            Data#pd.declared, DeviceCount, Data#pd.last_activity, Now, Threshold
+        cx_presence_calculation:effective(
+            Data#presence_session.declared,
+            DeviceCount,
+            Data#presence_session.last_activity,
+            Now,
+            Threshold
         ),
     #{manual_state := NormManual, until := NormUntil} =
-        cx_presence_calc:normalize(Data#pd.declared, Now),
-    write_eff(Data, State, Message, NormUntil, DeviceCount, Now),
-    Changed = {State, Message} =/= Data#pd.last_effective,
+        cx_presence_calculation:normalize(Data#presence_session.declared, Now),
+    write_effective(Data, State, Message, NormUntil, DeviceCount, Now),
+    Changed = {State, Message} =/= Data#presence_session.last_effective,
     Changed andalso publish(T, U, State, Message, NormUntil),
     Actions =
-        away_action(State, NormManual, Data#pd.last_activity, Threshold, Now) ++
+        away_action(State, NormManual, Data#presence_session.last_activity, Threshold, Now) ++
             until_action(NormUntil, Now),
-    {Data#pd{last_effective = {State, Message}}, Actions}.
+    {Data#presence_session{last_effective = {State, Message}}, Actions}.
 
-write_eff(#pd{tenant = T, user_id = U}, State, Message, Until, DeviceCount, Now) ->
-    ok = mnesia:dirty_write(#cx_presence_eff{
+write_effective(
+    #presence_session{tenant = T, user_id = U}, State, Message, Until, DeviceCount, Now
+) ->
+    ok = mnesia:dirty_write(#cx_presence_effective{
         key = {T, U},
         pid = self(),
         state = State,

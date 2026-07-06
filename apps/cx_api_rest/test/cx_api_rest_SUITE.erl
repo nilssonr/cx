@@ -13,6 +13,10 @@
     admin_crud_roundtrip/1,
     cross_tenant_forbidden/1,
     agent_open_media_flow/1,
+    qualification_wrapup_flow/1,
+    self_force_sign_out_qualification_409/1,
+    ready_reason_null_roundtrip/1,
+    read_surface_and_pagination/1,
     integrator_cancel_rules/1,
     forbidden_without_permission/1,
     presence_roundtrip/1
@@ -25,6 +29,10 @@ all() ->
         admin_crud_roundtrip,
         cross_tenant_forbidden,
         agent_open_media_flow,
+        qualification_wrapup_flow,
+        self_force_sign_out_qualification_409,
+        ready_reason_null_roundtrip,
+        read_surface_and_pagination,
         integrator_cancel_rules,
         forbidden_without_permission,
         presence_roundtrip
@@ -74,10 +82,10 @@ unauthorized_paths(Config) ->
 admin_crud_roundtrip(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
     %% bootstrap: create the tenant itself
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Acme">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
 
     %% skill with tenant-defined levels
     {200, #{<<"id">> := SkillId}} =
@@ -95,7 +103,6 @@ admin_crud_roundtrip(Config) ->
             }
         ),
     %% queue, profile, reason (media types are product constants)
-    MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(
             Config,
@@ -104,7 +111,7 @@ admin_crud_roundtrip(Config) ->
             Admin,
             #{
                 <<"name">> => <<"Building permits">>,
-                <<"skill_reqs">> => [
+                <<"skill_requirements">> => [
                     #{
                         <<"skill_id">> => SkillId,
                         <<"min_rank">> => 1
@@ -227,7 +234,7 @@ admin_crud_roundtrip(Config) ->
         ),
     {409, #{<<"error">> := <<"in_use">>}} =
         req(Config, delete, Base ++ "/roles/" ++ binary_to_list(RoleId), Admin),
-    %% dropping the user is not enough — the queue's skill_reqs still
+    %% dropping the user is not enough — the queue's skill_requirements still
     %% hold the skill, so it stays blocked
     {204, _} = req(Config, delete, Base ++ "/users/" ++ binary_to_list(UserId), Admin),
     {409, #{<<"error">> := <<"in_use">>}} =
@@ -260,10 +267,10 @@ cross_tenant_forbidden(Config) ->
 
 agent_open_media_flow(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Flow">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
 
     MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
@@ -276,18 +283,19 @@ agent_open_media_flow(Config) ->
         ),
     Agent = user_token(
         Config,
-        Tid,
+        TenantId,
         <<"flow-agent">>,
         [
             <<"agent:session:self">>,
             <<"agent:ready:self">>,
             <<"agent:offers:self">>,
+            <<"agent:interactions:self">>,
             <<"agent:wrapup:self">>
         ]
     ),
     Integrator = user_token(
         Config,
-        Tid,
+        TenantId,
         <<"flow-integrator">>,
         [
             <<"interactions:create">>,
@@ -296,8 +304,11 @@ agent_open_media_flow(Config) ->
         ]
     ),
 
-    %% agent signs in and goes ready for open media
+    %% agent signs in and goes ready for open media; a retried sign-in
+    %% is idempotent (200 + current state, not 409)
     {200, #{<<"agent_id">> := _}} =
+        req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {200, #{<<"agent_id">> := _, <<"ready">> := _}} =
         req(Config, post, "/api/v1/agent/session", Agent, #{}),
     {204, _} = req(
         Config,
@@ -308,7 +319,7 @@ agent_open_media_flow(Config) ->
     ),
 
     %% integrator: "put this request on this queue"
-    {200, #{<<"id">> := IId}} =
+    {200, #{<<"id">> := InteractionId}} =
         req(
             Config,
             post,
@@ -321,10 +332,10 @@ agent_open_media_flow(Config) ->
             }
         ),
 
-    %% the offer shows up on the agent session (event push is a later
-    %% milestone; REST clients poll the session)
+    %% the offer shows up on the agent session (the WS transport pushes
+    %% it too; polling the session stays a supported REST pattern)
     {ok, OfferId} = poll_offer(Config, Agent),
-    {204, _} = req(
+    {200, #{<<"interaction_id">> := InteractionId}} = req(
         Config,
         post,
         "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
@@ -338,14 +349,14 @@ agent_open_media_flow(Config) ->
         req(
             Config,
             get,
-            "/api/v1/interactions/" ++ binary_to_list(IId),
+            "/api/v1/interactions/" ++ binary_to_list(InteractionId),
             Integrator
         ),
 
     {204, _} = req(
         Config,
         post,
-        "/api/v1/agent/interactions/" ++ binary_to_list(IId) ++
+        "/api/v1/agent/interactions/" ++ binary_to_list(InteractionId) ++
             "/complete",
         Agent,
         #{}
@@ -354,24 +365,406 @@ agent_open_media_flow(Config) ->
         req(
             Config,
             get,
-            "/api/v1/interactions/" ++ binary_to_list(IId),
+            "/api/v1/interactions/" ++ binary_to_list(InteractionId),
             Integrator
         ),
     {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
+    %% sign-out is idempotent
+    {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
+    ok.
+
+%% Qualification codes over HTTP: tenant CRUD of the tree, then the
+%% agent-side hard block — DELETE wrapup 409s until codes are PUT.
+qualification_wrapup_flow(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := TenantId}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Qual">>}),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+
+    %% tree CRUD via the generic handler
+    {200, #{<<"id">> := TopicA, <<"parent_id">> := null}} =
+        req(Config, post, Base ++ "/qualification-codes", Admin, #{
+            <<"name">> => <<"Topic A">>
+        }),
+    {200, #{<<"id">> := TopicA1}} =
+        req(Config, post, Base ++ "/qualification-codes", Admin, #{
+            <<"name">> => <<"Topic A.1">>,
+            <<"parent_id">> => TopicA
+        }),
+    {200, Codes} = req(Config, get, Base ++ "/qualification-codes", Admin),
+    ?assertEqual(2, length(Codes)),
+    {409, #{<<"error">> := <<"in_use">>}} =
+        req(Config, delete, Base ++ "/qualification-codes/" ++ binary_to_list(TopicA), Admin),
+
+    {200, #{<<"id">> := QueueId}} =
+        req(Config, post, Base ++ "/queues", Admin, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 60000,
+            <<"qualification_required">> => true
+        }),
+    Agent = user_token(Config, TenantId, <<"qual-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>,
+        <<"agent:offers:self">>,
+        <<"agent:interactions:self">>,
+        <<"agent:wrapup:self">>
+    ]),
+    Integrator = user_token(Config, TenantId, <<"qual-integrator">>, [
+        <<"interactions:create">>,
+        <<"interactions:read">>
+    ]),
+
+    {200, #{<<"agent_id">> := AgentUid}} =
+        req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {204, _} = req(
+        Config,
+        put,
+        "/api/v1/agent/media/open_media/state",
+        Agent,
+        #{<<"state">> => <<"ready">>}
+    ),
+    {200, #{<<"id">> := InteractionId}} =
+        req(Config, post, "/api/v1/interactions", Integrator, #{
+            <<"queue_id">> => QueueId,
+            <<"media_type">> => <<"open_media">>
+        }),
+    {ok, OfferId} = poll_offer(Config, Agent),
+    {200, #{<<"interaction_id">> := InteractionId}} = req(
+        Config,
+        post,
+        "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
+        Agent,
+        #{}
+    ),
+    IPath = "/api/v1/agent/interactions/" ++ binary_to_list(InteractionId),
+
+    %% hold/resume ride along over HTTP
+    {204, _} = req(Config, post, IPath ++ "/hold", Agent, #{}),
+    {409, #{<<"error">> := <<"not_active">>}} =
+        req(Config, post, IPath ++ "/hold", Agent, #{}),
+    {204, _} = req(Config, post, IPath ++ "/resume", Agent, #{}),
+
+    {200, #{<<"state">> := <<"wrapup">>, <<"wrapup_until">> := _}} =
+        req(Config, post, IPath ++ "/complete", Agent, #{}),
+
+    %% finalize is blocked until codes are entered
+    {409, #{<<"error">> := <<"qualification_required">>}} =
+        req(Config, post, IPath ++ "/wrapup/finalize", Agent, #{}),
+    {422, _} =
+        req(Config, put, IPath ++ "/qualifications", Agent, #{
+            <<"qualification_ids">> => [<<"ghost">>]
+        }),
+    {204, _} =
+        req(Config, put, IPath ++ "/qualifications", Agent, #{
+            <<"qualification_ids">> => [TopicA1]
+        }),
+    {204, _} = req(Config, post, IPath ++ "/wrapup/finalize", Agent, #{}),
+
+    {200, #{
+        <<"state">> := <<"completed">>,
+        <<"qualification_ids">> := [TopicA1]
+    }} =
+        req(
+            Config,
+            get,
+            "/api/v1/interactions/" ++ binary_to_list(InteractionId),
+            Integrator
+        ),
+    {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
+
+    %% supervisor force sign-out route: idempotent even when the target
+    %% is already gone; a plain agent token lacks agent:session:any
+    KickPath =
+        Base ++ "/users/" ++ binary_to_list(AgentUid) ++ "/agent-session",
+    {403, _} = req(Config, delete, KickPath, Agent),
+    {204, _} = req(Config, delete, KickPath, Admin),
+    ok.
+
+%% ?force=true is no loophole around mandatory codes: self-force is
+%% refused while unqualified required wrap-up work exists; only the
+%% supervisor authority (agent:session:any) overrides the gate.
+self_force_sign_out_qualification_409(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := TenantId}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Force">>}),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    {200, #{<<"id">> := QueueId}} =
+        req(Config, post, Base ++ "/queues", Admin, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 60000,
+            <<"qualification_required">> => true
+        }),
+    Agent = user_token(Config, TenantId, <<"force-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>,
+        <<"agent:offers:self">>,
+        <<"agent:interactions:self">>
+    ]),
+    Integrator = user_token(Config, TenantId, <<"force-integrator">>, [
+        <<"interactions:create">>
+    ]),
+    {200, #{<<"agent_id">> := AgentUid}} =
+        req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {204, _} = req(
+        Config,
+        put,
+        "/api/v1/agent/media/open_media/state",
+        Agent,
+        #{<<"state">> => <<"ready">>}
+    ),
+    {200, #{<<"id">> := InteractionId}} =
+        req(Config, post, "/api/v1/interactions", Integrator, #{
+            <<"queue_id">> => QueueId,
+            <<"media_type">> => <<"open_media">>
+        }),
+    {ok, OfferId} = poll_offer(Config, Agent),
+    {200, _} = req(
+        Config,
+        post,
+        "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
+        Agent,
+        #{}
+    ),
+    {200, #{<<"state">> := <<"wrapup">>}} =
+        req(
+            Config,
+            post,
+            "/api/v1/agent/interactions/" ++ binary_to_list(InteractionId) ++ "/complete",
+            Agent,
+            #{}
+        ),
+
+    %% unqualified ACW blocks both plain and forced self sign-out
+    {409, #{<<"error">> := <<"qualification_required">>}} =
+        req(Config, delete, "/api/v1/agent/session", Agent),
+    {409, #{<<"error">> := <<"qualification_required">>}} =
+        req(Config, delete, "/api/v1/agent/session?force=true", Agent),
+
+    %% the supervisor authority overrides the gate on a live session
+    KickPath =
+        Base ++ "/users/" ++ binary_to_list(AgentUid) ++ "/agent-session",
+    {204, _} = req(Config, delete, KickPath, Admin),
+    ok.
+
+%% The server serializes ready as {"state":"ready","reason_id":null};
+%% echoing a GET body back into PUT must round-trip for both states.
+%% A NON-null reason on ready stays rejected (covered in
+%% read_surface_and_pagination).
+ready_reason_null_roundtrip(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := TenantId}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Null">>}),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    {200, #{<<"id">> := ReasonId}} =
+        req(Config, post, Base ++ "/not-ready-reasons", Admin, #{
+            <<"name">> => <<"Lunch">>
+        }),
+    Agent = user_token(Config, TenantId, <<"null-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>
+    ]),
+    {200, _} = req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    StatePath = "/api/v1/agent/media/open_media/state",
+
+    %% explicit nulls are accepted as absent for both states
+    {204, _} = req(Config, put, StatePath, Agent, #{
+        <<"state">> => <<"ready">>,
+        <<"reason_id">> => null
+    }),
+    {204, _} = req(Config, put, StatePath, Agent, #{
+        <<"state">> => <<"not_ready">>,
+        <<"reason_id">> => null
+    }),
+
+    %% the GET body echoes back verbatim, for both states
+    {204, _} = req(Config, put, StatePath, Agent, #{
+        <<"state">> => <<"not_ready">>,
+        <<"reason_id">> => ReasonId
+    }),
+    {200, #{<<"ready">> := #{<<"open_media">> := NotReadyBody}}} =
+        req(Config, get, "/api/v1/agent/session", Agent),
+    ?assertEqual(
+        #{<<"state">> => <<"not_ready">>, <<"reason_id">> => ReasonId},
+        NotReadyBody
+    ),
+    {204, _} = req(Config, put, StatePath, Agent, NotReadyBody),
+    {204, _} = req(Config, put, StatePath, Agent, #{<<"state">> => <<"ready">>}),
+    {200, #{<<"ready">> := #{<<"open_media">> := ReadyBody}}} =
+        req(Config, get, "/api/v1/agent/session", Agent),
+    ?assertEqual(
+        #{<<"state">> => <<"ready">>, <<"reason_id">> => null},
+        ReadyBody
+    ),
+    {204, _} = req(Config, put, StatePath, Agent, ReadyBody),
+
+    {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
+    ok.
+
+%% The read surface: tenant-wide filtered list with cursor pagination,
+%% the agent's own detailed list, and the structured ready map.
+read_surface_and_pagination(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := TenantId}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Reads">>}),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    {200, #{<<"id">> := QueueId}} =
+        req(Config, post, Base ++ "/queues", Admin, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 0
+        }),
+    {200, #{<<"id">> := ReasonId}} =
+        req(Config, post, Base ++ "/not-ready-reasons", Admin, #{
+            <<"name">> => <<"Lunch">>
+        }),
+    Integrator = user_token(Config, TenantId, <<"reads-integrator">>, [
+        <<"interactions:create">>,
+        <<"interactions:read">>
+    ]),
+    Agent = user_token(Config, TenantId, <<"reads-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>,
+        <<"agent:offers:self">>,
+        <<"agent:interactions:self">>
+    ]),
+
+    Ids = [
+        begin
+            {200, #{<<"id">> := I}} =
+                req(Config, post, "/api/v1/interactions", Integrator, #{
+                    <<"queue_id">> => QueueId,
+                    <<"media_type">> => <<"open_media">>
+                }),
+            I
+        end
+     || _ <- [1, 2, 3]
+    ],
+
+    %% filters + validation
+    {200, #{<<"items">> := All, <<"next">> := null}} =
+        req(Config, get, "/api/v1/interactions?state=queued", Integrator),
+    ?assertEqual(lists:sort(Ids), lists:sort([maps:get(<<"id">>, I) || I <- All])),
+    {200, #{<<"items">> := []}} =
+        req(Config, get, "/api/v1/interactions?state=completed", Integrator),
+    {422, _} = req(Config, get, "/api/v1/interactions?state=bogus", Integrator),
+    {422, _} = req(Config, get, "/api/v1/interactions?limit=0", Integrator),
+
+    %% cursor walk: 2 + 1, newest first, no overlap
+    {200, #{<<"items">> := [P1a, P1b], <<"next">> := Cursor}} =
+        req(Config, get, "/api/v1/interactions?limit=2", Integrator),
+    ?assert(is_binary(Cursor)),
+    {200, #{<<"items">> := [P2a]}} =
+        req(
+            Config,
+            get,
+            "/api/v1/interactions?limit=2&after=" ++ binary_to_list(Cursor),
+            Integrator
+        ),
+    PageIds = [maps:get(<<"id">>, I) || I <- [P1a, P1b, P2a]],
+    ?assertEqual(lists:sort(Ids), lists:sort(PageIds)),
+
+    %% the agent's own list rehydrates detail; ready map is structured
+    {200, _} = req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {204, _} = req(Config, put, "/api/v1/agent/media/open_media/state", Agent, #{
+        <<"state">> => <<"not_ready">>,
+        <<"reason_id">> => ReasonId
+    }),
+    {200, #{
+        <<"ready">> := #{
+            <<"open_media">> := #{
+                <<"state">> := <<"not_ready">>,
+                <<"reason_id">> := ReasonId
+            }
+        }
+    }} =
+        req(Config, get, "/api/v1/agent/session", Agent),
+    {200, []} = req(Config, get, "/api/v1/agent/interactions", Agent),
+    %% a reason on "ready" is a client bug, not something to drop silently
+    {422, #{<<"error">> := <<"invalid:reason_id">>}} =
+        req(Config, put, "/api/v1/agent/media/open_media/state", Agent, #{
+            <<"state">> => <<"ready">>,
+            <<"reason_id">> => ReasonId
+        }),
+    {204, _} = req(Config, put, "/api/v1/agent/media/open_media/state", Agent, #{
+        <<"state">> => <<"ready">>
+    }),
+    {ok, OfferId} = poll_offer(Config, Agent),
+
+    %% offers have a snapshot read surface: list + single, with the
+    %% queue-computed ring deadline (default timeout -> integer)
+    {200, [
+        #{
+            <<"offer_id">> := OfferId,
+            <<"interaction_id">> := _,
+            <<"queue_id">> := QueueId,
+            <<"expires_at">> := ExpiresAt
+        }
+    ]} =
+        req(Config, get, "/api/v1/agent/offers", Agent),
+    ?assert(is_integer(ExpiresAt)),
+    {200, #{<<"offer_id">> := OfferId}} =
+        req(Config, get, "/api/v1/agent/offers/" ++ binary_to_list(OfferId), Agent),
+    {404, _} = req(Config, get, "/api/v1/agent/offers/ghost", Agent),
+
+    {200, #{<<"interaction_id">> := Mine}} =
+        req(
+            Config,
+            post,
+            "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
+            Agent,
+            #{}
+        ),
+    %% a resolved offer is gone — an attempt, not a durable resource
+    %% (the unlimited agent gets offered the NEXT queued interaction
+    %% immediately, so the list isn't empty; the resolved id is absent)
+    {200, OffersAfter} = req(Config, get, "/api/v1/agent/offers", Agent),
+    ?assertNot(
+        lists:any(
+            fun(#{<<"offer_id">> := O}) -> O =:= OfferId end,
+            OffersAfter
+        )
+    ),
+    {404, _} = req(
+        Config,
+        get,
+        "/api/v1/agent/offers/" ++ binary_to_list(OfferId),
+        Agent
+    ),
+
+    {200, [#{<<"id">> := Mine, <<"state">> := <<"active">>, <<"queue_id">> := QueueId}]} =
+        req(Config, get, "/api/v1/agent/interactions", Agent),
+    %% single own-interaction view, 404 for anything not currently owned
+    {200, #{<<"id">> := Mine, <<"state">> := <<"active">>}} =
+        req(
+            Config,
+            get,
+            "/api/v1/agent/interactions/" ++ binary_to_list(Mine),
+            Agent
+        ),
+    [NotMine | _] = [I || I <- Ids, I =/= Mine],
+    {404, _} = req(
+        Config,
+        get,
+        "/api/v1/agent/interactions/" ++ binary_to_list(NotMine),
+        Agent
+    ),
     ok.
 
 integrator_cancel_rules(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"C">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
     MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(Config, post, Base ++ "/queues", Admin, #{<<"name">> => <<"q">>}),
     Integrator = user_token(
         Config,
-        Tid,
+        TenantId,
         <<"c-int">>,
         [
             <<"interactions:create">>,
@@ -380,7 +773,7 @@ integrator_cancel_rules(Config) ->
         ]
     ),
 
-    {200, #{<<"id">> := IId}} =
+    {200, #{<<"id">> := InteractionId}} =
         req(
             Config,
             post,
@@ -388,11 +781,15 @@ integrator_cancel_rules(Config) ->
             Integrator,
             #{<<"queue_id">> => QueueId, <<"media_type">> => MediaId}
         ),
-    Path = "/api/v1/interactions/" ++ binary_to_list(IId),
-    {204, _} = req(Config, delete, Path, Integrator),
+    Path = "/api/v1/interactions/" ++ binary_to_list(InteractionId),
+    %% cancel is a state transition, not a resource removal: POST verb,
+    %% and the row remains readable as `cancelled`
+    {204, _} = req(Config, post, Path ++ "/cancel", Integrator, #{}),
     {200, #{<<"state">> := <<"cancelled">>}} = req(Config, get, Path, Integrator),
     {409, #{<<"error">> := <<"not_cancellable">>}} =
-        req(Config, delete, Path, Integrator),
+        req(Config, post, Path ++ "/cancel", Integrator, #{}),
+    %% the old DELETE is gone
+    {405, _} = req(Config, delete, Path, Integrator),
 
     %% unknown queue -> 404, closed queue -> 409
     {404, _} = req(
@@ -424,10 +821,10 @@ integrator_cancel_rules(Config) ->
 
 forbidden_without_permission(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"F">>}),
-    Nobody = user_token(Config, Tid, <<"nobody">>, []),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Nobody = user_token(Config, TenantId, <<"nobody">>, []),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
     {403, _} = req(
         Config,
         post,
@@ -456,9 +853,9 @@ boss_token(Config, TenantId) ->
         <<"urn:zitadel:iam:org:id">> => TenantId
     }).
 
-%% Creates a user with a role carrying Perms (via a boss token), then
+%% Creates a user with a role carrying Permissions (via a boss token), then
 %% mints a token for that user's subject.
-user_token(Config, TenantId, Subject, Perms) ->
+user_token(Config, TenantId, Subject, Permissions) ->
     Admin = boss_token(Config, TenantId),
     Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
     {200, #{<<"id">> := RoleId}} =
@@ -469,7 +866,7 @@ user_token(Config, TenantId, Subject, Perms) ->
             Admin,
             #{
                 <<"name">> => <<"role-", Subject/binary>>,
-                <<"permissions">> => Perms
+                <<"permissions">> => Permissions
             }
         ),
     {200, #{<<"id">> := _}} =
@@ -498,7 +895,7 @@ poll_offer(_Config, _Agent, 0) ->
     {error, no_offer};
 poll_offer(Config, Agent, N) ->
     case req(Config, get, "/api/v1/agent/session", Agent) of
-        {200, #{<<"pending_offers">> := [OfferId | _]}} ->
+        {200, #{<<"pending_offers">> := [#{<<"offer_id">> := OfferId} | _]}} ->
             {ok, OfferId};
         {200, _} ->
             timer:sleep(20),
@@ -540,9 +937,9 @@ req(Config, Method, Path, Token, Body, _Opts) ->
 
 presence_roundtrip(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"P">>}),
-    User = user_token(Config, Tid, <<"presence-user">>, [<<"presence:set:self">>]),
+    User = user_token(Config, TenantId, <<"presence-user">>, [<<"presence:set:self">>]),
     {200, #{
         <<"state">> := <<"offline">>,
         <<"manual_state">> := <<"busy">>,

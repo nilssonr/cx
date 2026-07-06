@@ -20,7 +20,7 @@ init([]) ->
         env => #{dispatch => cx_rest_routes:dispatch()},
         middlewares => [
             cowboy_router,
-            cx_rest_auth_mw,
+            cx_rest_auth_middleware,
             cowboy_handler
         ]
     },

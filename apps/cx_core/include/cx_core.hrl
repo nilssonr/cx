@@ -12,7 +12,7 @@
 %% Produced by cx_auth from a validated token; consumed by every domain
 %% function. Lives in cx_core (not cx_auth) because cx_core enforces
 %% permissions and cx_auth depends on cx_core.
--record(auth_ctx, {
+-record(auth_context, {
     tenant_id :: binary(),
     user_id :: binary() | undefined,
     subject :: binary() | undefined,
@@ -58,7 +58,7 @@
 
 %% Widening steps are sorted ascending by AfterMs with non-increasing
 %% ranks (validated at config write); each step REPLACES min_rank.
--record(skill_req, {
+-record(skill_requirement, {
     skill_id :: binary(),
     min_rank :: pos_integer(),
     widening = [] :: [{AfterMs :: pos_integer(), MinRank :: pos_integer()}]
@@ -67,20 +67,27 @@
 -record(cx_queue, {
     key :: {binary(), binary()},
     name :: binary(),
-    skill_reqs = [] :: [#skill_req{}],
+    skill_requirements = [] :: [#skill_requirement{}],
     %% no record defaults on purpose: the creation defaults live in
     %% cx_queue:create/2, so every construction states its values and
     %% eqWAlizer rejects one that forgets
     wrapup_duration_ms :: non_neg_integer(),
+    %% cap on TOTAL after-call work per interaction (initial duration plus
+    %% extensions); infinity = uncapped (0 on the wire)
+    wrapup_max_ms :: pos_integer() | infinity,
     %% ring time for an offer; infinity = ring forever (0 on the wire)
     offer_timeout_ms :: pos_integer() | infinity,
+    %% when true, after-call work cannot finalize (timer, DELETE or
+    %% sign-out) until the interaction carries qualification codes —
+    %% entering them is what releases the agent
+    qualification_required :: boolean(),
     status = open :: open | closed
 }).
 
-%% "If I'm handling >= Gte of when_media, don't route me any of block."
--record(rp_guard, {
+%% "If I'm handling >= AtLeast of when_media, don't route me any of block."
+-record(routing_profile_guard, {
     when_media :: binary(),
-    gte :: pos_integer(),
+    at_least :: pos_integer(),
     block = [] :: [binary()]
 }).
 
@@ -88,8 +95,8 @@
     key :: {binary(), binary()},
     name :: binary(),
     max_total = unlimited :: pos_integer() | unlimited,
-    media_caps = #{} :: #{binary() => pos_integer()},
-    guards = [] :: [#rp_guard{}]
+    media_capacities = #{} :: #{binary() => pos_integer()},
+    guards = [] :: [#routing_profile_guard{}]
 }).
 
 -record(cx_not_ready_reason, {
@@ -98,21 +105,43 @@
     active = true :: boolean()
 }).
 
-%% enqueued_at + seq form the queue position and are assigned exactly once;
+%% Hierarchical classification codes applied to interactions during
+%% completion/after-call work. parent_id links form a tenant-scoped tree
+%% (undefined = root); ANY active node is selectable — interior nodes
+%% included (the UI drills down through cascading dropdowns and may stop
+%% at any level).
+-record(cx_qualification_code, {
+    key :: {binary(), binary()},
+    name :: binary(),
+    parent_id :: binary() | undefined,
+    active = true :: boolean()
+}).
+
+%% enqueued_at + sequence form the queue position and are assigned exactly once;
 %% requeues (reject/timeout/crash) and queue-process recovery reuse them, so
 %% an interaction can never lose its place.
+%%
+%% Lifecycle: queued -> offered -> active <-> held -> wrapup -> completed
+%% (wrapup is skipped when the queue's wrapup_duration_ms is 0; cancelled
+%% is reachable from queued only). "completed" is terminal INCLUDING
+%% after-call work: the customer part ends at wrapup entry, the agent is
+%% released at completed.
 -record(cx_interaction, {
     key :: {binary(), binary()},
     queue_key :: {binary(), binary()},
     %% one of cx_media:all() — media types are product concepts, not data
     media_type :: binary(),
     properties = #{} :: #{binary() => binary()},
-    state = queued :: queued | offered | active | completed | cancelled,
+    state = queued :: queued | offered | active | held | wrapup | completed | cancelled,
     agent_id :: binary() | undefined,
     created_at :: integer(),
     enqueued_at :: integer(),
-    seq :: integer(),
+    sequence :: integer(),
     accepted_at :: integer() | undefined,
+    wrapup_started_at :: integer() | undefined,
+    wrapup_until :: integer() | undefined,
+    %% cx_qualification_code ids (any node of the tree, interior included)
+    qualification_ids = [] :: [binary()],
     completed_at :: integer() | undefined
 }).
 
@@ -122,7 +151,7 @@
 %% ever COMPARED to now, never rewritten — so connectionless users
 %% expire lazily with no process (and no event fires at that moment;
 %% clients self-expire using the `until` in presence payloads).
--record(cx_presence_decl, {
+-record(cx_presence_declaration, {
     key :: {binary(), binary()},
     %% one of cx_presence_state:all(); undefined = automatic
     manual_state :: binary() | undefined,
@@ -135,7 +164,7 @@
 %% live cx_presence_session on every transition and deleted when it
 %% stops. Invariant: a row exists iff a session process owns it; read
 %% paths treat dead-pid rows as absent. Cache, never authoritative.
--record(cx_presence_eff, {
+-record(cx_presence_effective, {
     key :: {binary(), binary()},
     pid :: pid(),
     %% one of cx_presence_state:all()
@@ -153,9 +182,10 @@
     key :: {binary(), binary()},
     pid :: pid(),
     ready = #{} :: #{binary() => ready | {not_ready, binary() | undefined}},
-    %% active + reserved (pending offers) counts per media type
+    %% per-media counts of everything occupying capacity: active + held +
+    %% after-call work + reserved (pending offers) — wrap-up is not a
+    %% separate routing gate, it occupies its slot through this mix
     mix = #{} :: #{binary() => non_neg_integer()},
-    wrapup_until = 0 :: integer(),
     skills = #{} :: #{binary() => pos_integer()},
     profile :: #cx_routing_profile{} | undefined,
     idle_since = 0 :: integer()

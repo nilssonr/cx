@@ -1,8 +1,15 @@
 -module(cx_agent_session).
 
-%% One gen_statem per signed-in agent. States: online | wrap_up — wrap_up
-%% differs in exactly one way: offers are refused. Readiness, capacity and
-%% current mix are orthogonal per-media data, not states.
+%% One gen_statem per signed-in agent ("agent session" = the signed-in
+%% work session; the customer session is the interaction). The statem has
+%% a single state — everything else (readiness, capacity, per-interaction
+%% phase) is orthogonal data.
+%%
+%% Each owned interaction carries its own phase: active <-> held ->
+%% wrapup (after-call work). ALL phases occupy capacity in the mix, so
+%% ACW blocks new offers of that media purely through the routing
+%% profile — an agent without capacity limits is never blocked, by
+%% design (the superhuman/bot case).
 %%
 %% Call discipline (deadlock safety): queues CALL sessions (offers) and
 %% CAST them outcomes; sessions never call queues. Accept/reject flow
@@ -19,23 +26,59 @@
 -export([start_link/4]).
 -export([callback_mode/0, init/1, handle_event/4, terminate/3]).
 
--record(sess, {
+%% One owned interaction (accepted offer) and its lifecycle phase.
+%% qualification_required and wrapup_max_ms snapshot the queue's policy
+%% at ACW entry (mid-flight config changes don't retroactively trap an
+%% agent or move their cap); qualified tracks whether the interaction
+%% currently carries codes — authoritative here because every
+%% qualification write flows through this process.
+-record(work, {
+    media :: binary(),
+    queue_key :: {binary(), binary()},
+    phase = active :: active | held | wrapup,
+    wrapup_started_at :: integer() | undefined,
+    wrapup_until :: integer() | undefined,
+    wrapup_max_ms :: pos_integer() | infinity | undefined,
+    qualification_required = false :: boolean(),
+    qualified = false :: boolean()
+}).
+
+%% One pending (ringing) offer as this session sees it. expires_at is
+%% the queue-computed ring deadline (undefined = ring forever); the
+%% queue's timer is authoritative — this copy only feeds read surfaces.
+-record(pending_offer, {
+    interaction_id :: binary(),
+    media :: binary(),
+    queue_key :: {binary(), binary()},
+    queue_pid :: pid(),
+    monitor_ref :: reference(),
+    expires_at :: integer() | undefined
+}).
+
+-record(agent_session, {
     tenant :: binary(),
     agent_id :: binary(),
     profile :: #cx_routing_profile{},
     skills :: #{binary() => pos_integer()},
     ready = #{} :: #{binary() => ready | {not_ready, binary() | undefined}},
-    %% InteractionId => {MediaTypeId, QueueKey}
-    active = #{} :: map(),
-    %% OfferId => {InteractionId, MediaTypeId, QueueKey, QueuePid, MonRef}
-    pending = #{} :: map(),
-    wrapup_until = 0 :: integer(),
-    idle_since :: integer()
+    %% InteractionId => #work{}
+    work = #{} :: #{binary() => #work{}},
+    %% OfferId => #pending_offer{}
+    pending = #{} :: #{binary() => #pending_offer{}},
+    %% [{OfferId, InteractionId}] most-recent-first, capped — serves
+    %% retried accepts after the offer left `pending` (idempotency)
+    recent_accepts = [] :: [{binary(), binary()}],
+    idle_since :: integer(),
+    %% teardown in progress: snapshot writes are pointless — terminate/3
+    %% deletes the row moments later
+    shutting_down = false :: boolean()
 }).
+
+-define(RECENT_ACCEPTS_MAX, 50).
 
 start_link(TenantId, AgentId, Skills, Profile) ->
     gen_statem:start_link(
-        {via, cx_reg, {agent, TenantId, AgentId}},
+        {via, cx_registry, {agent, TenantId, AgentId}},
         ?MODULE,
         [TenantId, AgentId, Skills, Profile],
         []
@@ -44,7 +87,7 @@ start_link(TenantId, AgentId, Skills, Profile) ->
 callback_mode() -> handle_event_function.
 
 init([TenantId, AgentId, Skills, Profile]) ->
-    Data = #sess{
+    Data = #agent_session{
         tenant = TenantId,
         agent_id = AgentId,
         skills = Skills,
@@ -60,7 +103,7 @@ init([TenantId, AgentId, Skills, Profile]) ->
 %% ---- readiness ----
 
 handle_event({call, From}, {set_ready, Media, NewState}, _State, Data) ->
-    Data1 = Data#sess{ready = maps:put(Media, NewState, Data#sess.ready)},
+    Data1 = Data#agent_session{ready = maps:put(Media, NewState, Data#agent_session.ready)},
     write_snapshot(Data1),
     publish(
         Data1,
@@ -68,59 +111,95 @@ handle_event({call, From}, {set_ready, Media, NewState}, _State, Data) ->
         Media,
         agent_ready_changed,
         #{
-            <<"agent_id">> => Data1#sess.agent_id,
+            <<"agent_id">> => Data1#agent_session.agent_id,
             <<"media_type">> => Media,
-            <<"state">> => ready_to_bin(NewState)
+            <<"ready">> => ready_to_json(NewState)
         }
     ),
-    NewState =:= ready andalso cx_router_signal:agent_available(Data1#sess.tenant),
+    NewState =:= ready andalso cx_router_signal:agent_available(Data1#agent_session.tenant),
     {keep_state, Data1, [{reply, From, ok}]};
 %% ---- offers ----
 
-handle_event({call, From}, {offer, _Offer}, wrap_up, _Data) ->
-    {keep_state_and_data, [{reply, From, {error, not_routable}}]};
-handle_event({call, From}, {offer, Offer}, online, Data) ->
+handle_event({call, From}, {offer, Offer}, _State, Data) ->
     #{
         offer_id := OfferId,
-        interaction_id := IId,
+        interaction_id := InteractionId,
         media := Media,
         queue_key := QueueKey,
-        queue_pid := QueuePid
+        queue_pid := QueuePid,
+        expires_at := ExpiresAt
     } = Offer,
     Routable =
-        maps:get(Media, Data#sess.ready, undefined) =:= ready andalso
-            cx_routing:can_route(Data#sess.profile, mix_of(Data), Media),
+        maps:get(Media, Data#agent_session.ready, undefined) =:= ready andalso
+            cx_routing:can_route(Data#agent_session.profile, mix_of(Data), Media),
     case Routable of
         true ->
-            MonRef = erlang:monitor(process, QueuePid),
+            MonitorRef = erlang:monitor(process, QueuePid),
             Pending = maps:put(
                 OfferId,
-                {IId, Media, QueueKey, QueuePid, MonRef},
-                Data#sess.pending
+                #pending_offer{
+                    interaction_id = InteractionId,
+                    media = Media,
+                    queue_key = QueueKey,
+                    queue_pid = QueuePid,
+                    monitor_ref = MonitorRef,
+                    expires_at = null_to_undef(ExpiresAt)
+                },
+                Data#agent_session.pending
             ),
-            Data1 = Data#sess{pending = Pending},
+            Data1 = Data#agent_session{pending = Pending},
             write_snapshot(Data1),
             {keep_state, Data1, [{reply, From, ok}]};
         false ->
             {keep_state_and_data, [{reply, From, {error, not_routable}}]}
     end;
 handle_event({call, From}, {pending_queue, OfferId}, _State, Data) ->
-    case Data#sess.pending of
-        #{OfferId := {_, _, _, QueuePid, _}} ->
+    case Data#agent_session.pending of
+        #{OfferId := #pending_offer{queue_pid = QueuePid}} ->
             {keep_state_and_data, [{reply, From, {ok, QueuePid}}]};
+        _ ->
+            case lists:keyfind(OfferId, 1, Data#agent_session.recent_accepts) of
+                {OfferId, InteractionId} ->
+                    {keep_state_and_data, [{reply, From, {recently_accepted, InteractionId}}]};
+                false ->
+                    {keep_state_and_data, [{reply, From, {error, not_found}}]}
+            end
+    end;
+handle_event({call, From}, list_offers, _State, Data) ->
+    Offers = [
+        offer_to_map(OfferId, O)
+     || OfferId := O <- Data#agent_session.pending
+    ],
+    {keep_state_and_data, [{reply, From, {ok, Offers}}]};
+handle_event({call, From}, {get_offer, OfferId}, _State, Data) ->
+    case Data#agent_session.pending of
+        #{OfferId := O} ->
+            {keep_state_and_data, [{reply, From, {ok, offer_to_map(OfferId, O)}}]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
     end;
 handle_event(cast, {offer_accepted, OfferId}, _State, Data) ->
-    case maps:take(OfferId, Data#sess.pending) of
-        {{IId, Media, QueueKey, _QueuePid, MonRef}, Pending} ->
-            erlang:demonitor(MonRef, [flush]),
-            Data1 = Data#sess{
+    case maps:take(OfferId, Data#agent_session.pending) of
+        {
+            #pending_offer{
+                interaction_id = InteractionId,
+                media = Media,
+                queue_key = QueueKey,
+                monitor_ref = MonitorRef
+            },
+            Pending
+        } ->
+            erlang:demonitor(MonitorRef, [flush]),
+            Data1 = Data#agent_session{
                 pending = Pending,
-                active = maps:put(
-                    IId,
-                    {Media, QueueKey},
-                    Data#sess.active
+                work = maps:put(
+                    InteractionId,
+                    #work{media = Media, queue_key = QueueKey},
+                    Data#agent_session.work
+                ),
+                recent_accepts = lists:sublist(
+                    [{OfferId, InteractionId} | Data#agent_session.recent_accepts],
+                    ?RECENT_ACCEPTS_MAX
                 )
             },
             write_snapshot(Data1),
@@ -129,151 +208,274 @@ handle_event(cast, {offer_accepted, OfferId}, _State, Data) ->
             keep_state_and_data
     end;
 handle_event(cast, {offer_withdrawn, OfferId}, _State, Data) ->
-    case maps:take(OfferId, Data#sess.pending) of
-        {{_, _, _, _, MonRef}, Pending} ->
-            erlang:demonitor(MonRef, [flush]),
-            Data1 = touch_idle(Data#sess{pending = Pending}),
+    case maps:take(OfferId, Data#agent_session.pending) of
+        {#pending_offer{monitor_ref = MonitorRef}, Pending} ->
+            erlang:demonitor(MonitorRef, [flush]),
+            Data1 = touch_idle(Data#agent_session{pending = Pending}),
             write_snapshot(Data1),
             %% a reservation was released — capacity may have opened up
-            cx_router_signal:agent_available(Data1#sess.tenant),
+            cx_router_signal:agent_available(Data1#agent_session.tenant),
             {keep_state, Data1};
         error ->
             keep_state_and_data
     end;
-%% ---- completion and wrap-up ----
+%% ---- hold / resume ----
 
-handle_event({call, From}, {complete, IId}, State, Data) ->
-    case maps:take(IId, Data#sess.active) of
-        {{Media, QueueKey = {_Tenant, QueueId}}, Active} ->
-            ok = complete_interaction(Data, IId),
-            publish(
-                Data,
-                QueueId,
-                Media,
-                interaction_completed,
-                #{
-                    <<"interaction_id">> => IId,
-                    <<"agent_id">> => Data#sess.agent_id
-                }
-            ),
-            WrapupMs = wrapup_duration(QueueKey),
+handle_event({call, From}, {hold, InteractionId}, _State, Data) ->
+    with_work(InteractionId, From, Data, [active], not_active, fun(W) ->
+        case set_state(Data, InteractionId, active, held, #{}) of
+            ok ->
+                Data1 = put_work(InteractionId, W#work{phase = held}, Data),
+                publish_i(Data1, W, InteractionId, interaction_held, #{}),
+                {keep_state, Data1, [{reply, From, ok}]};
+            {error, conflict} ->
+                {keep_state_and_data, [{reply, From, {error, conflict}}]}
+        end
+    end);
+handle_event({call, From}, {resume, InteractionId}, _State, Data) ->
+    with_work(InteractionId, From, Data, [held], not_held, fun(W) ->
+        case set_state(Data, InteractionId, held, active, #{}) of
+            ok ->
+                Data1 = put_work(InteractionId, W#work{phase = active}, Data),
+                publish_i(Data1, W, InteractionId, interaction_resumed, #{}),
+                {keep_state, Data1, [{reply, From, ok}]};
+            {error, conflict} ->
+                {keep_state_and_data, [{reply, From, {error, conflict}}]}
+        end
+    end);
+%% ---- completion and after-call work ----
+
+handle_event({call, From}, {complete, InteractionId}, _State, Data) ->
+    with_work(InteractionId, From, Data, [active, held, wrapup], not_found, fun
+        (#work{phase = wrapup, wrapup_until = Until0}) when is_integer(Until0) ->
+            %% a retried complete (lost response) finds the work already
+            %% in ACW — idempotent success with the current payload
+            {keep_state_and_data, [
+                {reply, From,
+                    {ok, #{
+                        <<"state">> => <<"wrapup">>,
+                        <<"wrapup_until">> => Until0
+                    }}}
+            ]};
+        (W = #work{phase = Phase}) when Phase =:= active; Phase =:= held ->
             Now = cx_time:now_ms(),
-            Data1 = touch_idle(Data#sess{active = Active}),
-            case WrapupMs > 0 of
+            {WrapupMs, WrapupMaxMs, QRequired} = wrapup_policy(W#work.queue_key),
+            %% qualification-required work enters ACW even with a zero
+            %% window (Until = Now: the 0 timer fires straight into the
+            %% hard block) — a shrunk wrap-up window must not disable
+            %% the tenant's mandatory-codes policy
+            case WrapupMs > 0 orelse QRequired of
                 true ->
-                    Until = max(Data1#sess.wrapup_until, Now + WrapupMs),
-                    Data2 = Data1#sess{wrapup_until = Until},
-                    write_snapshot(Data2),
-                    publish(
-                        Data2,
-                        QueueId,
-                        Media,
-                        wrapup_started,
-                        #{
-                            <<"agent_id">> => Data2#sess.agent_id,
-                            <<"until">> => Until
-                        }
-                    ),
-                    {next_state, wrap_up, Data2, [
-                        {reply, From, ok},
-                        {{timeout, wrapup}, Until - Now, expire}
-                    ]};
+                    Until = Now + WrapupMs,
+                    case
+                        set_state(Data, InteractionId, Phase, wrapup, #{
+                            wrapup_started_at => Now,
+                            wrapup_until => Until
+                        })
+                    of
+                        ok ->
+                            W1 = W#work{
+                                phase = wrapup,
+                                wrapup_started_at = Now,
+                                wrapup_until = Until,
+                                wrapup_max_ms = WrapupMaxMs,
+                                qualification_required = QRequired
+                            },
+                            Data1 = put_work(InteractionId, W1, Data),
+                            publish_i(Data1, W1, InteractionId, wrapup_started, #{
+                                <<"until">> => Until
+                            }),
+                            {keep_state, Data1, [
+                                {reply, From,
+                                    {ok, #{
+                                        <<"state">> => <<"wrapup">>,
+                                        <<"wrapup_until">> => Until
+                                    }}},
+                                {{timeout, {wrapup, InteractionId}}, max(0, Until - Now), expire}
+                            ]};
+                        {error, conflict} ->
+                            {keep_state_and_data, [{reply, From, {error, conflict}}]}
+                    end;
                 false ->
-                    write_snapshot(Data1),
-                    cx_router_signal:agent_available(Data1#sess.tenant),
-                    {next_state, State, Data1, [{reply, From, ok}]}
+                    case finalize(Data, InteractionId, W, undefined) of
+                        {ok, Data1} ->
+                            {keep_state, Data1, [{reply, From, ok}]};
+                        {error, conflict} ->
+                            {keep_state_and_data, [{reply, From, {error, conflict}}]}
+                    end
             end;
-        error ->
+        (_) ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
+    end);
+handle_event({call, From}, {extend_wrapup, InteractionId, Ms}, _State, Data) ->
+    with_work(InteractionId, From, Data, [wrapup], not_in_wrapup, fun
+        (W = #work{wrapup_until = Until0}) when is_integer(Until0) ->
+            Now = cx_time:now_ms(),
+            StartedAt = W#work.wrapup_started_at,
+            Until = Until0 + Ms,
+            case within_wrapup_cap(W, StartedAt, Until) of
+                true ->
+                    case set_state(Data, InteractionId, wrapup, wrapup, #{wrapup_until => Until}) of
+                        ok ->
+                            W1 = W#work{wrapup_until = Until},
+                            Data1 = put_work(InteractionId, W1, Data),
+                            publish_i(Data1, W1, InteractionId, wrapup_extended, #{
+                                <<"until">> => Until
+                            }),
+                            %% Until can still be in the past: the qualification
+                            %% hard block keeps overdue ACW alive without
+                            %% re-arming, and a small extend may not catch up —
+                            %% a clamped 0 fires straight into the expiry
+                            %% clause, which holds or finalizes correctly.
+                            {keep_state, Data1, [
+                                {reply, From, ok},
+                                {{timeout, {wrapup, InteractionId}}, max(0, Until - Now), expire}
+                            ]};
+                        {error, conflict} ->
+                            {keep_state_and_data, [{reply, From, {error, conflict}}]}
+                    end;
+                false ->
+                    {keep_state_and_data, [{reply, From, {error, wrapup_cap_exceeded}}]}
+            end;
+        (_) ->
+            {keep_state_and_data, [{reply, From, {error, not_in_wrapup}}]}
+    end);
+handle_event({call, From}, {finalize_wrapup, InteractionId}, _State, Data) ->
+    with_work(InteractionId, From, Data, [wrapup], not_in_wrapup, fun
+        (#work{qualification_required = true, qualified = false}) ->
+            {keep_state_and_data, [{reply, From, {error, qualification_required}}]};
+        (W) ->
+            case finalize(Data, InteractionId, W, wrapup_cancelled) of
+                {ok, Data1} ->
+                    {keep_state, Data1, [
+                        {reply, From, ok},
+                        {{timeout, {wrapup, InteractionId}}, cancel}
+                    ]};
+                {error, conflict} ->
+                    {keep_state_and_data, [{reply, From, {error, conflict}}]}
+            end
+    end);
+handle_event({timeout, {wrapup, InteractionId}}, expire, _State, Data) ->
+    case Data#agent_session.work of
+        #{InteractionId := #work{phase = wrapup, qualification_required = true, qualified = false}} ->
+            %% the hard block: an unqualified interaction on a
+            %% qualification-required queue stays in ACW past its timer,
+            %% holding the capacity slot — entering codes releases it
+            %% (see the qualify handler)
+            keep_state_and_data;
+        #{InteractionId := W = #work{phase = wrapup}} ->
+            case finalize(Data, InteractionId, W, wrapup_ended) of
+                {ok, Data1} -> {keep_state, Data1};
+                {error, conflict} -> keep_state_and_data
+            end;
+        _ ->
+            keep_state_and_data
     end;
-handle_event({call, From}, {extend_wrapup, Ms}, wrap_up, Data) ->
-    Now = cx_time:now_ms(),
-    Until = Data#sess.wrapup_until + Ms,
-    Data1 = Data#sess{wrapup_until = Until},
-    write_snapshot(Data1),
-    publish(
-        Data1,
-        undefined,
-        undefined,
-        wrapup_extended,
-        #{<<"agent_id">> => Data1#sess.agent_id, <<"until">> => Until}
-    ),
-    {keep_state, Data1, [
-        {reply, From, ok},
-        {{timeout, wrapup}, Until - Now, expire}
-    ]};
-handle_event({call, From}, {extend_wrapup, _Ms}, online, _Data) ->
-    {keep_state_and_data, [{reply, From, {error, not_in_wrapup}}]};
-handle_event({call, From}, cancel_wrapup, wrap_up, Data) ->
-    Data1 = Data#sess{wrapup_until = 0},
-    write_snapshot(Data1),
-    publish(
-        Data1,
-        undefined,
-        undefined,
-        wrapup_cancelled,
-        #{<<"agent_id">> => Data1#sess.agent_id}
-    ),
-    cx_router_signal:agent_available(Data1#sess.tenant),
-    {next_state, online, Data1, [{reply, From, ok}, {{timeout, wrapup}, cancel}]};
-handle_event({call, From}, cancel_wrapup, online, _Data) ->
-    {keep_state_and_data, [{reply, From, {error, not_in_wrapup}}]};
-handle_event({timeout, wrapup}, expire, wrap_up, Data) ->
-    Data1 = Data#sess{wrapup_until = 0},
-    write_snapshot(Data1),
-    publish(
-        Data1,
-        undefined,
-        undefined,
-        wrapup_ended,
-        #{<<"agent_id">> => Data1#sess.agent_id}
-    ),
-    cx_router_signal:agent_available(Data1#sess.tenant),
-    {next_state, online, Data1};
+%% ---- qualification ----
+
+handle_event({call, From}, {qualify, InteractionId, Ids}, _State, Data) ->
+    %% any phase qualifies — the wrong-phase error is unreachable
+    with_work(InteractionId, From, Data, [active, held, wrapup], not_found, fun(
+        W = #work{phase = Phase}
+    ) ->
+        case set_state(Data, InteractionId, Phase, Phase, #{qualification_ids => Ids}) of
+            ok ->
+                W1 = W#work{qualified = Ids =/= []},
+                Data1 = put_work(InteractionId, W1, Data),
+                publish_i(Data1, W1, InteractionId, interaction_qualified, #{
+                    <<"qualification_ids">> => Ids
+                }),
+                maybe_release_overdue(Data1, InteractionId, W1, From);
+            {error, conflict} ->
+                {keep_state_and_data, [{reply, From, {error, conflict}}]}
+        end
+    end);
 %% ---- introspection and shutdown ----
 
-handle_event({call, From}, get_state, State, Data) ->
+handle_event({call, From}, get_state, _State, Data) ->
+    ByPhase = fun(Phase) ->
+        [InteractionId || InteractionId := #work{phase = P} <- Data#agent_session.work, P =:= Phase]
+    end,
+    Offers = [
+        offer_to_map(OfferId, O)
+     || OfferId := O <- Data#agent_session.pending
+    ],
     Info = #{
-        <<"agent_id">> => Data#sess.agent_id,
+        <<"agent_id">> => Data#agent_session.agent_id,
         <<"ready">> => maps:map(
-            fun(_, V) -> ready_to_bin(V) end,
-            Data#sess.ready
+            fun(_, V) -> ready_to_json(V) end,
+            Data#agent_session.ready
         ),
-        <<"active">> => maps:keys(Data#sess.active),
-        <<"pending_offers">> => maps:keys(Data#sess.pending),
-        <<"in_wrapup">> => State =:= wrap_up,
-        <<"wrapup_until">> => Data#sess.wrapup_until
+        <<"active">> => ByPhase(active),
+        <<"held">> => ByPhase(held),
+        <<"wrapup">> => ByPhase(wrapup),
+        <<"pending_offers">> => Offers
     },
     {keep_state_and_data, [{reply, From, {ok, Info}}]};
+handle_event({call, From}, list_work, _State, Data) ->
+    {keep_state_and_data, [{reply, From, {ok, maps:keys(Data#agent_session.work)}}]};
 handle_event({call, From}, stop_session, _State, Data) ->
-    case maps:size(Data#sess.active) of
-        0 ->
-            %% hand pending offers back; the queue requeues at original
-            %% position and we're gone before its cast comes back
-            maps:foreach(
-                fun(OfferId, {_, _, _, QueuePid, _}) ->
-                    gen_statem:cast(QueuePid, {reject_cast, OfferId})
+    Engaged = [
+        InteractionId
+     || InteractionId := #work{phase = P} <- Data#agent_session.work,
+        P =:= active orelse P =:= held
+    ],
+    Unqualified = [
+        InteractionId
+     || InteractionId := #work{phase = wrapup, qualification_required = true, qualified = false} <-
+            Data#agent_session.work
+    ],
+    case {Engaged, Unqualified} of
+        {[_ | _], _} ->
+            {keep_state_and_data, [{reply, From, {error, has_active_interactions}}]};
+        {[], [_ | _]} ->
+            %% sign-out must not be a loophole around mandatory codes
+            {keep_state_and_data, [{reply, From, {error, qualification_required}}]};
+        {[], []} ->
+            %% ACW does not block sign-out: finalize any wrap-ups, then
+            %% the shared teardown tail
+            Data1 = maps:fold(
+                fun(InteractionId, W, Acc) ->
+                    case finalize(Acc, InteractionId, W, wrapup_cancelled) of
+                        {ok, Acc1} -> Acc1;
+                        {error, conflict} -> remove_work(InteractionId, Acc)
+                    end
                 end,
-                Data#sess.pending
+                Data#agent_session{shutting_down = true},
+                Data#agent_session.work
             ),
-            publish(Data, undefined, undefined, session_ended, #{
-                <<"agent_id">> => Data#sess.agent_id
-            }),
-            {stop_and_reply, normal, [{reply, From, ok}]};
-        _ ->
-            {keep_state_and_data, [{reply, From, {error, has_active_interactions}}]}
+            shutdown(From, Data1)
     end;
-handle_event(info, {'DOWN', MonRef, process, _Pid, _Reason}, _State, Data) ->
+handle_event({call, From}, {force_stop_session, Mode}, _State, Data) ->
+    %% The escape hatch: engaged work goes back to its queue at
+    %% original position, wrap-ups finalize, pending offers are handed
+    %% back. Whether mandatory qualification codes may be skipped is
+    %% the caller's authority, carried as the mode — self ?force=true
+    %% honors the gate, the supervisor kick overrides it. The facade
+    %% maps permissions to modes; this process never sees one.
+    Unqualified = [
+        InteractionId
+     || InteractionId := #work{phase = wrapup, qualification_required = true, qualified = false} <-
+            Data#agent_session.work
+    ],
+    case {Mode, Unqualified} of
+        {honor_qualification, [_ | _]} ->
+            %% force must not be a loophole around mandatory codes
+            {keep_state_and_data, [{reply, From, {error, qualification_required}}]};
+        _ ->
+            force_shutdown(From, Data)
+    end;
+handle_event(info, {'DOWN', MonitorRef, process, _Pid, _Reason}, _State, Data) ->
     %% a queue died while we held offers from it — drop those reservations
     Pending = maps:filter(
-        fun(_, {_, _, _, _, Ref}) -> Ref =/= MonRef end,
-        Data#sess.pending
+        fun(_, #pending_offer{monitor_ref = Ref}) -> Ref =/= MonitorRef end,
+        Data#agent_session.pending
     ),
-    case maps:size(Pending) =:= maps:size(Data#sess.pending) of
+    case maps:size(Pending) =:= maps:size(Data#agent_session.pending) of
         true ->
             keep_state_and_data;
         false ->
-            Data1 = touch_idle(Data#sess{pending = Pending}),
+            Data1 = touch_idle(Data#agent_session{pending = Pending}),
             write_snapshot(Data1),
             {keep_state, Data1}
     end;
@@ -284,7 +486,7 @@ terminate(_Reason, _State, Data) ->
     try
         mnesia:dirty_delete(
             cx_agent_snapshot,
-            {Data#sess.tenant, Data#sess.agent_id}
+            {Data#agent_session.tenant, Data#agent_session.agent_id}
         )
     catch
         _:_ -> ok
@@ -293,53 +495,277 @@ terminate(_Reason, _State, Data) ->
 
 %% ---- helpers ----
 
-mix_of(#sess{active = Active, pending = Pending}) ->
-    Add = fun(Media, Acc) -> maps:update_with(Media, fun(N) -> N + 1 end, 1, Acc) end,
-    Mix0 = maps:fold(fun(_, {Media, _}, Acc) -> Add(Media, Acc) end, #{}, Active),
-    maps:fold(fun(_, {_, Media, _, _, _}, Acc) -> Add(Media, Acc) end, Mix0, Pending).
+%% The shared shape of the per-interaction call handlers: look the work
+%% up, guard the phase, hand #work{} to the verb-specific fun. Missing
+%% work replies not_found; a phase outside AllowedPhases replies
+%% WrongPhaseError.
+with_work(InteractionId, From, Data, AllowedPhases, WrongPhaseError, Fun) ->
+    case Data#agent_session.work of
+        #{InteractionId := W = #work{phase = Phase}} ->
+            case lists:member(Phase, AllowedPhases) of
+                true -> Fun(W);
+                false -> {keep_state_and_data, [{reply, From, {error, WrongPhaseError}}]}
+            end;
+        _ ->
+            {keep_state_and_data, [{reply, From, {error, not_found}}]}
+    end.
 
-touch_idle(Data = #sess{active = Active, pending = Pending}) ->
-    case maps:size(Active) + maps:size(Pending) of
-        0 -> Data#sess{idle_since = cx_time:now_ms()};
+mix_of(#agent_session{work = Work, pending = Pending}) ->
+    Add = fun(Media, Acc) -> maps:update_with(Media, fun(N) -> N + 1 end, 1, Acc) end,
+    Mix0 = maps:fold(fun(_, #work{media = Media}, Acc) -> Add(Media, Acc) end, #{}, Work),
+    maps:fold(fun(_, #pending_offer{media = Media}, Acc) -> Add(Media, Acc) end, Mix0, Pending).
+
+touch_idle(Data = #agent_session{work = Work, pending = Pending}) ->
+    case maps:size(Work) + maps:size(Pending) of
+        0 -> Data#agent_session{idle_since = cx_time:now_ms()};
         _ -> Data
     end.
 
-write_snapshot(Data = #sess{tenant = Tenant, agent_id = AgentId}) ->
+put_work(InteractionId, W, Data) ->
+    Data1 = Data#agent_session{work = maps:put(InteractionId, W, Data#agent_session.work)},
+    write_snapshot(Data1),
+    Data1.
+
+remove_work(InteractionId, Data) ->
+    Data1 = touch_idle(Data#agent_session{
+        work = maps:remove(InteractionId, Data#agent_session.work)
+    }),
+    write_snapshot(Data1),
+    Data1.
+
+write_snapshot(#agent_session{shutting_down = true}) ->
+    ok;
+write_snapshot(Data = #agent_session{tenant = Tenant, agent_id = AgentId}) ->
     Rec = #cx_agent_snapshot{
         key = {Tenant, AgentId},
         pid = self(),
-        ready = Data#sess.ready,
+        ready = Data#agent_session.ready,
         mix = mix_of(Data),
-        wrapup_until = Data#sess.wrapup_until,
-        skills = Data#sess.skills,
-        profile = Data#sess.profile,
-        idle_since = Data#sess.idle_since
+        skills = Data#agent_session.skills,
+        profile = Data#agent_session.profile,
+        idle_since = Data#agent_session.idle_since
     },
-    ok = mnesia:dirty_write(Rec).
+    %% Skip byte-identical rewrites: hold/resume/extend/qualify change
+    %% neither the mix nor anything else the snapshot carries, and the
+    %% ram_copies lookup is cheaper than the write it elides.
+    case mnesia:dirty_read(cx_agent_snapshot, {Tenant, AgentId}) of
+        [Rec] -> ok;
+        _ -> ok = mnesia:dirty_write(Rec)
+    end.
 
-complete_interaction(#sess{tenant = Tenant, agent_id = AgentId}, IId) ->
+%% Forced teardown (mode already checked by the caller): engaged work
+%% goes back to its queue at original position, wrap-ups finalize,
+%% pending offers are handed back, the session stops. The Mnesia row is
+%% flipped to queued BEFORE the queue is told — if the queue is down or
+%% the cast never lands, recover/1 adopts the queued row at next start
+%% instead of the row stranding as active under a signed-out agent.
+force_shutdown(From, Data) ->
+    Data1 = maps:fold(
+        fun(InteractionId, W = #work{phase = Phase}, Acc) ->
+            case Phase of
+                wrapup ->
+                    case finalize(Acc, InteractionId, W, wrapup_cancelled) of
+                        {ok, Acc1} -> Acc1;
+                        {error, conflict} -> remove_work(InteractionId, Acc)
+                    end;
+                _ ->
+                    case requeue_row(Acc, InteractionId) of
+                        ok ->
+                            publish_i(Acc, W, InteractionId, interaction_requeued, #{}),
+                            {_, QueueId} = W#work.queue_key,
+                            case
+                                cx_queue_process:ensure_started(
+                                    Acc#agent_session.tenant, QueueId
+                                )
+                            of
+                                {ok, QueuePid} ->
+                                    gen_statem:cast(QueuePid, {adopt_queued, InteractionId});
+                                {error, _} ->
+                                    ok
+                            end;
+                        {error, conflict} ->
+                            %% a racing writer owns the row — not ours
+                            %% to narrate or hand back
+                            ok
+                    end,
+                    remove_work(InteractionId, Acc)
+            end
+        end,
+        Data#agent_session{shutting_down = true},
+        Data#agent_session.work
+    ),
+    shutdown(From, Data1).
+
+%% The shared teardown tail of both sign-out flavors: hand pending
+%% offers back (the queue requeues at original position and we're gone
+%% before its cast comes back), narrate session_ended, stop.
+shutdown(From, Data) ->
+    maps:foreach(
+        fun(OfferId, #pending_offer{queue_pid = QueuePid}) ->
+            gen_statem:cast(QueuePid, {reject_cast, OfferId})
+        end,
+        Data#agent_session.pending
+    ),
+    publish(Data, undefined, undefined, session_ended, #{
+        <<"agent_id">> => Data#agent_session.agent_id
+    }),
+    {stop_and_reply, normal, [{reply, From, ok}]}.
+
+%% Finalize an interaction: it leaves the mix and the agent's slot opens.
+%% AcwEvent narrates how the ACW envelope ended (wrapup_ended on timer
+%% expiry, wrapup_cancelled on early finalize, undefined when the queue
+%% has no wrap-up at all); interaction_completed marks the terminal
+%% transition in every case.
+finalize(Data, InteractionId, W = #work{phase = Phase}, AcwEvent) ->
+    case
+        set_state(Data, InteractionId, Phase, completed, #{
+            completed_at => cx_time:now_ms()
+        })
+    of
+        ok ->
+            Data1 = remove_work(InteractionId, Data),
+            AcwEvent =/= undefined andalso
+                publish_i(Data1, W, InteractionId, AcwEvent, #{}),
+            publish_i(Data1, W, InteractionId, interaction_completed, #{}),
+            cx_router_signal:agent_available(Data1#agent_session.tenant),
+            {ok, Data1};
+        {error, conflict} ->
+            {error, conflict}
+    end.
+
+%% The single guarded Mnesia transition for owned interactions: the row
+%% must be in the state matching our phase or nothing is written — a
+%% racing cancel/delete must not be overwritten, and no event may narrate
+%% a transition that never happened.
+set_state(
+    #agent_session{tenant = Tenant, agent_id = AgentId}, InteractionId, FromState, ToState, Extra
+) ->
     cx_store:tx(fun() ->
-        case mnesia:read(cx_interaction, {Tenant, IId}) of
-            [Rec = #cx_interaction{state = active}] ->
+        case mnesia:read(cx_interaction, {Tenant, InteractionId}) of
+            [Rec = #cx_interaction{state = FromState}] ->
                 mnesia:write(Rec#cx_interaction{
-                    state = completed,
+                    state = ToState,
                     agent_id = AgentId,
-                    completed_at = cx_time:now_ms()
+                    wrapup_started_at = maps:get(
+                        wrapup_started_at, Extra, Rec#cx_interaction.wrapup_started_at
+                    ),
+                    wrapup_until = maps:get(
+                        wrapup_until, Extra, Rec#cx_interaction.wrapup_until
+                    ),
+                    qualification_ids = maps:get(
+                        qualification_ids, Extra, Rec#cx_interaction.qualification_ids
+                    ),
+                    completed_at = maps:get(
+                        completed_at, Extra, Rec#cx_interaction.completed_at
+                    )
                 });
             _ ->
-                ok
+                {error, conflict}
         end
     end).
 
-wrapup_duration({Tenant, QueueId}) ->
+%% Return an engaged row to its queue's backlog: the inverse of accept,
+%% guarded like set_state (a racing writer owns the row and nothing is
+%% written). Every trace of the dead engagement is cleared — stale
+%% qualification codes or wrap-up timestamps must not survive to be
+%% attributed to whichever agent accepts the interaction next.
+requeue_row(#agent_session{tenant = Tenant}, InteractionId) ->
+    cx_store:tx(fun() ->
+        case mnesia:read(cx_interaction, {Tenant, InteractionId}) of
+            [Rec = #cx_interaction{state = State}] when
+                State =:= active; State =:= held
+            ->
+                mnesia:write(Rec#cx_interaction{
+                    state = queued,
+                    agent_id = undefined,
+                    accepted_at = undefined,
+                    qualification_ids = [],
+                    wrapup_started_at = undefined,
+                    wrapup_until = undefined
+                });
+            _ ->
+                {error, conflict}
+        end
+    end).
+
+wrapup_policy({Tenant, QueueId}) ->
     case cx_queue:fetch(Tenant, QueueId) of
-        {ok, #cx_queue{wrapup_duration_ms = Ms}} -> Ms;
-        {error, not_found} -> 0
+        {ok, Queue = #cx_queue{}} ->
+            {
+                Queue#cx_queue.wrapup_duration_ms,
+                Queue#cx_queue.wrapup_max_ms,
+                Queue#cx_queue.qualification_required
+            };
+        {error, not_found} ->
+            {0, infinity, false}
     end.
 
-ready_to_bin(ready) -> <<"ready">>;
-ready_to_bin({not_ready, undefined}) -> <<"not_ready">>;
-ready_to_bin({not_ready, Reason}) -> <<"not_ready:", Reason/binary>>.
+%% An overdue ACW (timer already fired against the qualification block)
+%% releases the moment codes arrive — entering them IS the release.
+maybe_release_overdue(
+    Data,
+    InteractionId,
+    W = #work{phase = wrapup, qualified = true, wrapup_until = Until},
+    From
+) when is_integer(Until) ->
+    case Until =< cx_time:now_ms() of
+        true ->
+            case finalize(Data, InteractionId, W, wrapup_ended) of
+                {ok, Data1} -> {keep_state, Data1, [{reply, From, ok}]};
+                {error, conflict} -> {keep_state, Data, [{reply, From, ok}]}
+            end;
+        false ->
+            {keep_state, Data, [{reply, From, ok}]}
+    end;
+maybe_release_overdue(Data, _InteractionId, _W, From) ->
+    {keep_state, Data, [{reply, From, ok}]}.
 
-publish(#sess{tenant = Tenant}, QueueId, Media, Type, ExtraData) ->
+%% Pure check on the cap snapshotted at ACW entry — no queue fetch per
+%% extend, and a mid-flight config change doesn't move a running cap.
+within_wrapup_cap(#work{wrapup_max_ms = Max}, StartedAt, Until) when is_integer(Max) ->
+    is_integer(StartedAt) andalso Until - StartedAt =< Max;
+within_wrapup_cap(_W, _StartedAt, _Until) ->
+    %% infinity, or a work record predating ACW entry — uncapped
+    true.
+
+offer_to_map(OfferId, #pending_offer{
+    interaction_id = InteractionId,
+    media = Media,
+    queue_key = {_, QueueId},
+    expires_at = ExpiresAt
+}) ->
+    #{
+        <<"offer_id">> => OfferId,
+        <<"interaction_id">> => InteractionId,
+        <<"media_type">> => Media,
+        <<"queue_id">> => QueueId,
+        <<"expires_at">> => cx_json:undef_to_null(ExpiresAt)
+    }.
+
+null_to_undef(null) -> undefined;
+null_to_undef(V) -> V.
+
+%% Structured on the way out, symmetric with the PUT body — clients
+%% never parse composite strings.
+ready_to_json(ready) ->
+    #{<<"state">> => <<"ready">>, <<"reason_id">> => null};
+ready_to_json({not_ready, Reason}) ->
+    #{
+        <<"state">> => <<"not_ready">>,
+        <<"reason_id">> => cx_json:undef_to_null(Reason)
+    }.
+
+publish_i(Data, #work{media = Media, queue_key = {_, QueueId}}, InteractionId, Type, Extra) ->
+    publish(
+        Data,
+        QueueId,
+        Media,
+        Type,
+        Extra#{
+            <<"interaction_id">> => InteractionId,
+            <<"agent_id">> => Data#agent_session.agent_id
+        }
+    ).
+
+publish(#agent_session{tenant = Tenant}, QueueId, Media, Type, ExtraData) ->
     cx_event:publish(Tenant, QueueId, Media, Type, ExtraData).

@@ -12,7 +12,7 @@
 
 -spec init() -> ok.
 init() ->
-    Dir = cx_cfg:get(cx_core, mnesia_dir, "data/mnesia"),
+    Dir = cx_config:get(cx_core, mnesia_dir, "data/mnesia"),
     ok = filelib:ensure_path(Dir),
     ok = ensure_loaded(),
     %% If some environment (rebar3 shell, test runner) already started
@@ -27,7 +27,12 @@ init() ->
         ok -> ok;
         {timeout, Missing} -> error({mnesia_tables_timeout, Missing});
         {error, Reason} -> error({mnesia_tables_error, Reason})
-    end.
+    end,
+    %% after wait_for_tables: add_table_index needs the table LOADED,
+    %% not merely known (a pre-existing disc table is not loaded right
+    %% after create_table returns already_exists)
+    lists:foreach(fun ensure_indexes/1, table_specs()),
+    ok.
 
 -spec tables() -> [atom()].
 tables() ->
@@ -55,6 +60,23 @@ ensure_table({Name, Opts}) ->
         {aborted, Reason} -> error({mnesia_table_error, Name, Reason})
     end.
 
+%% create_table is a no-op for a pre-existing table, so an index added
+%% to a spec would be silently absent on an existing data dir — and
+%% index_read on a missing index crashes. Ensuring indexes separately
+%% is schema-additive and idempotent; row-shape migration stays
+%% deliberately unsupported.
+ensure_indexes({Name, Opts}) ->
+    lists:foreach(
+        fun(Attribute) ->
+            case mnesia:add_table_index(Name, Attribute) of
+                {atomic, ok} -> ok;
+                {aborted, {already_exists, _, _}} -> ok;
+                {aborted, Reason} -> error({mnesia_index_error, Name, Attribute, Reason})
+            end
+        end,
+        proplists:get_value(index, Opts, [])
+    ).
+
 table_specs() ->
     Disc = {disc_copies, [node()]},
     Ram = {ram_copies, [node()]},
@@ -75,19 +97,22 @@ table_specs() ->
         {cx_not_ready_reason, [
             {attributes, record_info(fields, cx_not_ready_reason)}, {type, set}, Disc
         ]},
+        {cx_qualification_code, [
+            {attributes, record_info(fields, cx_qualification_code)}, {type, set}, Disc
+        ]},
         {cx_interaction, [
             {attributes, record_info(fields, cx_interaction)},
             {type, set},
             Disc,
-            {index, [#cx_interaction.queue_key]}
+            {index, [#cx_interaction.queue_key, #cx_interaction.agent_id]}
         ]},
         {cx_agent_snapshot, [
             {attributes, record_info(fields, cx_agent_snapshot)}, {type, set}, Ram
         ]},
-        {cx_presence_decl, [
-            {attributes, record_info(fields, cx_presence_decl)}, {type, set}, Disc
+        {cx_presence_declaration, [
+            {attributes, record_info(fields, cx_presence_declaration)}, {type, set}, Disc
         ]},
-        {cx_presence_eff, [
-            {attributes, record_info(fields, cx_presence_eff)}, {type, set}, Ram
+        {cx_presence_effective, [
+            {attributes, record_info(fields, cx_presence_effective)}, {type, set}, Ram
         ]}
     ].

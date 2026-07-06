@@ -5,12 +5,12 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
+        ok ?= cx_authz:require(Context, <<"routing_profiles:write">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, MaxTotal} ?= parse_max_total(Params, unlimited),
-        {ok, MediaCaps} ?= parse_media_caps(Params, #{}),
+        {ok, MediaCaps} ?= parse_media_capacities(Params, #{}),
         {ok, Guards} ?=
             case Params of
                 #{<<"guards">> := Raw} -> parse_guards(Raw);
@@ -20,7 +20,7 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
             key = {T, cx_id:new()},
             name = Name,
             max_total = MaxTotal,
-            media_caps = MediaCaps,
+            media_capacities = MediaCaps,
             guards = Guards
         },
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
@@ -28,28 +28,28 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, to_map(Rec)}
     end.
 
-get(#auth_ctx{tenant_id = T}, ProfileId) ->
+get(#auth_context{tenant_id = T}, ProfileId) ->
     maybe
         {ok, Rec} ?= cx_store:read(cx_routing_profile, {T, ProfileId}),
         {ok, to_map(Rec)}
     end.
 
-list(#auth_ctx{tenant_id = T}) ->
+list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_routing_profile, cx_patterns:routing_profiles(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_ctx{tenant_id = T}, ProfileId, Params) ->
+update(Context = #auth_context{tenant_id = T}, ProfileId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
+        ok ?= cx_authz:require(Context, <<"routing_profiles:write">>),
         {ok, Rec0} ?= cx_store:read(cx_routing_profile, {T, ProfileId}),
         {ok, Name} ?=
-            cx_params:opt_bin(
+            cx_params:optional_binary(
                 Params,
                 <<"name">>,
                 Rec0#cx_routing_profile.name
             ),
         {ok, MaxTotal} ?= parse_max_total(Params, Rec0#cx_routing_profile.max_total),
-        {ok, MediaCaps} ?= parse_media_caps(Params, Rec0#cx_routing_profile.media_caps),
+        {ok, MediaCaps} ?= parse_media_capacities(Params, Rec0#cx_routing_profile.media_capacities),
         {ok, Guards} ?=
             case Params of
                 #{<<"guards">> := Raw} -> parse_guards(Raw);
@@ -58,7 +58,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, ProfileId, Params) ->
         Rec = Rec0#cx_routing_profile{
             name = Name,
             max_total = MaxTotal,
-            media_caps = MediaCaps,
+            media_capacities = MediaCaps,
             guards = Guards
         },
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
@@ -69,9 +69,9 @@ update(Ctx = #auth_ctx{tenant_id = T}, ProfileId, Params) ->
 %% Deleting a profile users reference is blocked (409): a dangling
 %% profile reference must never happen — the session-start fallback for
 %% it fails closed, refusing the session.
-delete(Ctx = #auth_ctx{tenant_id = T}, ProfileId) ->
+delete(Context = #auth_context{tenant_id = T}, ProfileId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
+        ok ?= cx_authz:require(Context, <<"routing_profiles:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_routing_profile, {T, ProfileId}) of
@@ -102,7 +102,7 @@ to_map(#cx_routing_profile{
     key = {_, Id},
     name = Name,
     max_total = MaxTotal,
-    media_caps = MediaCaps,
+    media_capacities = MediaCaps,
     guards = Guards
 }) ->
     #{
@@ -113,12 +113,12 @@ to_map(#cx_routing_profile{
                 unlimited -> null;
                 N -> N
             end,
-        <<"media_caps">> => MediaCaps,
+        <<"media_capacities">> => MediaCaps,
         <<"guards">> => [guard_to_map(G) || G <- Guards]
     }.
 
-guard_to_map(#rp_guard{when_media = W, gte = Gte, block = Block}) ->
-    #{<<"when_media">> => W, <<"gte">> => Gte, <<"block">> => Block}.
+guard_to_map(#routing_profile_guard{when_media = W, at_least = AtLeast, block = Block}) ->
+    #{<<"when_media">> => W, <<"at_least">> => AtLeast, <<"block">> => Block}.
 
 %% max_total: positive integer, or null/absent for unlimited.
 parse_max_total(Params, Default) ->
@@ -132,37 +132,37 @@ parse_max_total(Params, Default) ->
 %% Media names in caps and guards must come from cx_media:all() — a
 %% guard referencing a nonexistent media type would be dead config that
 %% silently never fires, so it's rejected at write time instead.
-parse_media_caps(Params, Default) ->
-    case cx_params:opt_map(Params, <<"media_caps">>, Default) of
-        {ok, Caps} ->
+parse_media_capacities(Params, Default) ->
+    case cx_params:optional_map(Params, <<"media_capacities">>, Default) of
+        {ok, Capacities} ->
             Valid = lists:all(
                 fun({K, V}) ->
                     cx_media:is_valid(K) andalso is_integer(V) andalso V >= 0
                 end,
-                maps:to_list(Caps)
+                maps:to_list(Capacities)
             ),
             case Valid of
-                true -> {ok, Caps};
-                false -> {error, {invalid, <<"media_caps">>}}
+                true -> {ok, Capacities};
+                false -> {error, {invalid, <<"media_capacities">>}}
             end;
         Error ->
             Error
     end.
 
-%% [{"when_media": "voice", "gte": 1, "block": ["chat", "email"]}]
+%% [{"when_media": "voice", "at_least": 1, "block": ["chat", "email"]}]
 parse_guards(Raw) when is_list(Raw) ->
     try
         Guards = lists:map(
             fun(M) when is_map(M) ->
                 W = maps:get(<<"when_media">>, M),
-                Gte = maps:get(<<"gte">>, M),
+                AtLeast = maps:get(<<"at_least">>, M),
                 Block = maps:get(<<"block">>, M),
                 true = cx_media:is_valid(W),
-                true = is_integer(Gte) andalso Gte > 0,
+                true = is_integer(AtLeast) andalso AtLeast > 0,
                 true =
                     is_list(Block) andalso Block =/= [] andalso
                         lists:all(fun cx_media:is_valid/1, Block),
-                #rp_guard{when_media = W, gte = Gte, block = Block}
+                #routing_profile_guard{when_media = W, at_least = AtLeast, block = Block}
             end,
             Raw
         ),

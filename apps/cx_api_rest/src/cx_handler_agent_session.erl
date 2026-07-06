@@ -1,0 +1,29 @@
+-module(cx_handler_agent_session).
+
+%% The agent's SIGN-IN session (the per-agent router process) — not to
+%% be confused with the customer session, which is the interaction.
+%%
+%% POST   /api/v1/agent/session              sign in (idempotent: an
+%%                                           existing session returns
+%%                                           200 + its state, like GET)
+%% GET    /api/v1/agent/session              current state
+%% DELETE /api/v1/agent/session[?force=true] sign out (idempotent);
+%%                                           force requeues engaged work
+%%                                           and finalizes ACW, but still
+%%                                           refuses while mandatory
+%%                                           codes are missing (409)
+
+-export([init/2]).
+
+init(Req0, Opts = #{context := Context}) ->
+    Result =
+        case cowboy_req:method(Req0) of
+            <<"POST">> -> cx_router:start_session(Context);
+            <<"GET">> -> cx_router:get_session(Context);
+            <<"DELETE">> -> cx_router:stop_session(Context, is_force(Req0));
+            _ -> {error, method_not_allowed}
+        end,
+    {ok, cx_handler:reply(Result, Req0), Opts}.
+
+is_force(Req) ->
+    proplists:get_value(<<"force">>, cowboy_req:parse_qs(Req)) =:= <<"true">>.

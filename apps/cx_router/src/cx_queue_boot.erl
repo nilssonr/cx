@@ -16,7 +16,7 @@ boot() ->
     Queues = mnesia:dirty_match_object(cx_patterns:open_queues()),
     lists:foreach(
         fun(#cx_queue{key = {TenantId, QueueId}}) ->
-            {ok, _} = cx_queue_proc:ensure_started(TenantId, QueueId)
+            {ok, _} = cx_queue_process:ensure_started(TenantId, QueueId)
         end,
         Queues
     ).

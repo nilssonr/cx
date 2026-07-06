@@ -3,7 +3,7 @@
 %% PropEr properties for the presence pure core, wrapped in EUnit so
 %% plain `rebar3 eunit` runs them.
 %% eqWAlizer-exempt: PropEr's macro-generated generator code doesn't
-%% typecheck; the module under test (cx_presence_calc) is fully checked.
+%% typecheck; the module under test (cx_presence_calculation) is fully checked.
 
 -eqwalizer(ignore).
 
@@ -63,7 +63,7 @@ prop_no_devices_dominance() ->
     ?FORALL(
         {D, LA, Now, Thr},
         {declared(), activity(), now_gen(), threshold()},
-        maps:get(state, cx_presence_calc:effective(D, 0, LA, Now, Thr)) =:=
+        maps:get(state, cx_presence_calculation:effective(D, 0, LA, Now, Thr)) =:=
             <<"offline">>
     ).
 
@@ -80,10 +80,10 @@ prop_until_expiry_monotone() ->
             begin
                 [Lo, Hi] = lists:sort([Now1, Now2]),
                 Auto = D#{manual_state => undefined, message => undefined, until => undefined},
-                cx_presence_calc:effective(D, Devs, LA, Lo, Thr) =:=
-                    cx_presence_calc:effective(Auto, Devs, LA, Lo, Thr) andalso
-                    cx_presence_calc:effective(D, Devs, LA, Hi, Thr) =:=
-                        cx_presence_calc:effective(Auto, Devs, LA, Hi, Thr)
+                cx_presence_calculation:effective(D, Devs, LA, Lo, Thr) =:=
+                    cx_presence_calculation:effective(Auto, Devs, LA, Lo, Thr) andalso
+                    cx_presence_calculation:effective(D, Devs, LA, Hi, Thr) =:=
+                        cx_presence_calculation:effective(Auto, Devs, LA, Hi, Thr)
             end
         )
     ).
@@ -97,7 +97,7 @@ prop_manual_over_automatic() ->
         ?IMPLIES(
             maps:get(manual_state, D) =/= undefined andalso
                 (maps:get(until, D) =:= undefined orelse maps:get(until, D) > Now),
-            maps:get(state, cx_presence_calc:effective(D, Devs, LA, Now, Thr)) =:=
+            maps:get(state, cx_presence_calculation:effective(D, Devs, LA, Now, Thr)) =:=
                 maps:get(manual_state, D)
         )
     ).
@@ -109,7 +109,7 @@ prop_away_iff_idle() ->
         {choose(1, 4), activity(), now_gen(), threshold()},
         begin
             Auto = #{manual_state => undefined, message => undefined, until => undefined},
-            State = maps:get(state, cx_presence_calc:effective(Auto, Devs, LA, Now, Thr)),
+            State = maps:get(state, cx_presence_calculation:effective(Auto, Devs, LA, Now, Thr)),
             case Now - LA >= Thr of
                 true -> State =:= <<"away">>;
                 false -> State =:= <<"online">>
@@ -123,7 +123,7 @@ prop_totality() ->
         {D, Devs, LA, Now, Thr},
         {declared(), devices(), activity(), now_gen(), threshold()},
         cx_presence_state:is_valid(
-            maps:get(state, cx_presence_calc:effective(D, Devs, LA, Now, Thr))
+            maps:get(state, cx_presence_calculation:effective(D, Devs, LA, Now, Thr))
         )
     ).
 
@@ -135,7 +135,7 @@ prop_message_survives_offline() ->
         {declared(), devices(), activity(), now_gen(), threshold()},
         ?IMPLIES(
             maps:get(until, D) =:= undefined orelse maps:get(until, D) > Now,
-            maps:get(message, cx_presence_calc:effective(D, Devs, LA, Now, Thr)) =:=
+            maps:get(message, cx_presence_calculation:effective(D, Devs, LA, Now, Thr)) =:=
                 maps:get(message, D)
         )
     ).

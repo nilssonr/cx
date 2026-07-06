@@ -5,12 +5,12 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"roles:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
-        {ok, Perms} ?= opt_perms(Params, []),
-        Rec = #cx_role{key = {T, cx_id:new()}, name = Name, permissions = Perms},
+        ok ?= cx_authz:require(Context, <<"roles:write">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
+        {ok, Permissions} ?= optional_permissions(Params, []),
+        Rec = #cx_role{key = {T, cx_id:new()}, name = Name, permissions = Permissions},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, element(2, Rec#cx_role.key), role_created),
         {ok, to_map(Rec)}
@@ -18,23 +18,23 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
 
 %% Reads need no specific permission: any authenticated tenant member may
 %% see role definitions (agents resolve their own permissions through them).
-get(#auth_ctx{tenant_id = T}, RoleId) ->
+get(#auth_context{tenant_id = T}, RoleId) ->
     maybe
         {ok, Rec} ?= cx_store:read(cx_role, {T, RoleId}),
         {ok, to_map(Rec)}
     end.
 
-list(#auth_ctx{tenant_id = T}) ->
+list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_role, cx_patterns:roles(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_ctx{tenant_id = T}, RoleId, Params) ->
+update(Context = #auth_context{tenant_id = T}, RoleId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"roles:write">>),
+        ok ?= cx_authz:require(Context, <<"roles:write">>),
         {ok, Rec0} ?= cx_store:read(cx_role, {T, RoleId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_role.name),
-        {ok, Perms} ?= opt_perms(Params, Rec0#cx_role.permissions),
-        Rec = Rec0#cx_role{name = Name, permissions = Perms},
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_role.name),
+        {ok, Permissions} ?= optional_permissions(Params, Rec0#cx_role.permissions),
+        Rec = Rec0#cx_role{name = Name, permissions = Permissions},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, RoleId, role_updated),
         {ok, to_map(Rec)}
@@ -42,9 +42,9 @@ update(Ctx = #auth_ctx{tenant_id = T}, RoleId, Params) ->
 
 %% Deleting a role users reference is blocked (409) — a dangling role id
 %% would silently drop permissions at next token resolution.
-delete(Ctx = #auth_ctx{tenant_id = T}, RoleId) ->
+delete(Context = #auth_context{tenant_id = T}, RoleId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"roles:write">>),
+        ok ?= cx_authz:require(Context, <<"roles:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_role, {T, RoleId}) of
@@ -71,16 +71,16 @@ referenced(T, RoleId) ->
 fetch(TenantId, RoleId) ->
     cx_store:read(cx_role, {TenantId, RoleId}).
 
-to_map(#cx_role{key = {_, Id}, name = Name, permissions = Perms}) ->
-    #{<<"id">> => Id, <<"name">> => Name, <<"permissions">> => Perms}.
+to_map(#cx_role{key = {_, Id}, name = Name, permissions = Permissions}) ->
+    #{<<"id">> => Id, <<"name">> => Name, <<"permissions">> => Permissions}.
 
 %% Only catalog permissions a tenant may grant itself pass — <<"*">>,
 %% tenants:admin and unknown strings are rejected, so a tenant admin
 %% with roles:write cannot escalate past their tenant.
-opt_perms(Params, Default) ->
-    case cx_params:opt_list(Params, <<"permissions">>, Default) of
+optional_permissions(Params, Default) ->
+    case cx_params:optional_list(Params, <<"permissions">>, Default) of
         {ok, L} ->
-            case lists:all(fun cx_perm:is_tenant_assignable/1, L) of
+            case lists:all(fun cx_permission:is_tenant_assignable/1, L) of
                 true -> {ok, L};
                 false -> {error, {invalid, <<"permissions">>}}
             end;

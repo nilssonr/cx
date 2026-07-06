@@ -7,7 +7,7 @@
 %% dynamic() returns push the checking to the callers' pattern matches
 %% instead of pretending Mnesia gives us typed records.
 
--export([tx/1, read/2, list/2, dirty_list/2]).
+-export([tx/1, read/2, dirty_read/2, list/2, dirty_list/2, dirty_index_read/3]).
 
 -spec tx(fun(() -> eqwalizer:dynamic())) -> eqwalizer:dynamic().
 tx(Fun) ->
@@ -26,6 +26,17 @@ read(Tab, Key) ->
         end
     end).
 
+%% Dirty single-key variant, same rationale as dirty_list: hot read
+%% paths (e.g. reconnect rehydration) where a millisecond of staleness
+%% is invisible to the caller anyway.
+-spec dirty_read(atom(), term()) ->
+    {ok, eqwalizer:dynamic()} | {error, not_found}.
+dirty_read(Tab, Key) ->
+    case mnesia:dirty_read(Tab, Key) of
+        [Rec] -> {ok, Rec};
+        [] -> {error, not_found}
+    end.
+
 %% Pattern comes from cx_patterns and must constrain the key to
 %% {TenantId, '_'} (or the tenant id itself for cx_tenant) — tenant
 %% scoping happens in the pattern.
@@ -39,3 +50,12 @@ list(Tab, Pattern) ->
 -spec dirty_list(atom(), tuple()) -> [eqwalizer:dynamic()].
 dirty_list(Tab, Pattern) ->
     mnesia:dirty_match_object(Tab, Pattern).
+
+%% Dirty secondary-index lookup, same consistency stance as dirty_list.
+%% Position is a record-field index (#record.field) — not a match
+%% pattern, so the cx_patterns rule is untouched. NOTE: secondary
+%% indexes are node-global, not tenant-scoped; callers must re-check
+%% the tenant on the returned rows.
+-spec dirty_index_read(atom(), term(), pos_integer()) -> [eqwalizer:dynamic()].
+dirty_index_read(Tab, Key, Position) ->
+    mnesia:dirty_index_read(Tab, Key, Position).

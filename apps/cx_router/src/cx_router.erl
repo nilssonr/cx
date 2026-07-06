@@ -2,63 +2,90 @@
 
 %% Domain facade for the router: every operation a transport (REST today,
 %% gRPC/GraphQL later) can invoke exists here as a plain function taking
-%% an #auth_ctx{}. Permission checks live here or below — never in
+%% an #auth_context{}. Permission checks live here or below — never in
 %% transports.
 
 -include_lib("cx_core/include/cx_core.hrl").
 
--export([start_session/1, stop_session/1, get_session/1]).
+-export([start_session/1, stop_session/1, stop_session/2, get_session/1]).
+-export([force_stop_session/2]).
 -export([set_ready/3]).
 -export([create_interaction/2, cancel_interaction/2, get_interaction/2]).
--export([accept_offer/2, reject_offer/2, complete/2]).
--export([extend_wrapup/2, cancel_wrapup/1]).
+-export([list_interactions/2, agent_interactions/1]).
+-export([accept_offer/2, reject_offer/2, list_offers/1, get_offer/2]).
+-export([complete/2, hold/2, resume/2, qualify/3, agent_interaction/2]).
+-export([extend_wrapup/3, finalize_wrapup/2]).
 
 -define(CALL_TIMEOUT, 10000).
 
 %% ---- agent session lifecycle ----
 
-start_session(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
+%% Idempotent sign-in: the token identity IS the natural idempotency
+%% key (one session per {tenant, user}), so a retried POST returns the
+%% live session's state exactly like GET would.
+start_session(Context = #auth_context{tenant_id = TenantId, user_id = UserId}) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
-        ok ?= cx_authz:require_user(Ctx),
-        {ok, User} ?= cx_user:fetch(T, UserId),
+        ok ?= cx_authz:require(Context, <<"agent:session:self">>),
+        ok ?= cx_authz:require_user(Context),
+        {ok, User} ?= cx_user:fetch(TenantId, UserId),
         ok ?= active_user(User),
-        {ok, Profile} ?= load_profile(T, User#cx_user.routing_profile_id),
+        {ok, Profile} ?= load_profile(TenantId, User#cx_user.routing_profile_id),
         case
             cx_agent_session_sup:start_session(
-                T,
+                TenantId,
                 UserId,
                 User#cx_user.skills,
                 Profile
             )
         of
-            {ok, _Pid} -> {ok, #{<<"agent_id">> => UserId}};
-            {error, {already_started, _}} -> {error, already_started}
+            {ok, Pid} -> call(Pid, get_state);
+            {error, {already_started, Pid}} -> call(Pid, get_state)
         end
     end.
 
-stop_session(Ctx = #auth_ctx{}) ->
+stop_session(Context) ->
+    stop_session(Context, false).
+
+%% Idempotent sign-out: no session to delete is already the desired
+%% state. Force requeues engaged work (the escape hatch past
+%% has_active_interactions) but still refuses to skip mandatory
+%% qualification codes — only the supervisor authority below may.
+stop_session(Context = #auth_context{}, Force) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
-        {ok, Pid} ?= session_of(Ctx),
-        call(Pid, stop_session)
+        ok ?= cx_authz:require(Context, <<"agent:session:self">>),
+        case {session_of(Context), Force} of
+            {{ok, Pid}, true} -> call(Pid, {force_stop_session, honor_qualification});
+            {{ok, Pid}, false} -> call(Pid, stop_session);
+            {{error, no_session}, _} -> ok
+        end
     end.
 
-get_session(Ctx = #auth_ctx{}) ->
+%% Supervisor kick-out — a separate, deliberately grantable authority,
+%% and the only one that overrides the mandatory-codes gate.
+force_stop_session(Context = #auth_context{tenant_id = TenantId}, UserId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
-        {ok, Pid} ?= session_of(Ctx),
+        ok ?= cx_authz:require(Context, <<"agent:session:any">>),
+        case cx_registry:whereis_name({agent, TenantId, UserId}) of
+            Pid when is_pid(Pid) -> call(Pid, {force_stop_session, override});
+            undefined -> ok
+        end
+    end.
+
+get_session(Context = #auth_context{}) ->
+    maybe
+        ok ?= cx_authz:require(Context, <<"agent:session:self">>),
+        {ok, Pid} ?= session_of(Context),
         call(Pid, get_state)
     end.
 
 %% ---- readiness ----
 
-set_ready(Ctx = #auth_ctx{tenant_id = T}, Media, ReadyState) ->
+set_ready(Context = #auth_context{tenant_id = TenantId}, Media, ReadyState) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:ready:self">>),
+        ok ?= cx_authz:require(Context, <<"agent:ready:self">>),
         ok ?= valid_media(Media),
-        ok ?= validate_reason(T, ReadyState),
-        {ok, Pid} ?= session_of(Ctx),
+        ok ?= validate_reason(TenantId, ReadyState),
+        {ok, Pid} ?= session_of(Context),
         call(Pid, {set_ready, Media, ReadyState})
     end.
 
@@ -72,8 +99,8 @@ validate_reason(_T, ready) ->
     ok;
 validate_reason(_T, {not_ready, undefined}) ->
     ok;
-validate_reason(T, {not_ready, ReasonId}) ->
-    case cx_not_ready_reason:fetch(T, ReasonId) of
+validate_reason(TenantId, {not_ready, ReasonId}) ->
+    case cx_not_ready_reason:fetch(TenantId, ReasonId) of
         {ok, #cx_not_ready_reason{active = true}} -> ok;
         {ok, #cx_not_ready_reason{active = false}} -> {error, {invalid, <<"reason_id">>}};
         {error, not_found} -> {error, {invalid, <<"reason_id">>}}
@@ -81,83 +108,335 @@ validate_reason(T, {not_ready, ReasonId}) ->
 
 %% ---- interactions (Open Media rides on this directly) ----
 
-create_interaction(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create_interaction(Context = #auth_context{tenant_id = TenantId}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"interactions:create">>),
-        {ok, QueueId} ?= cx_params:require_bin(Params, <<"queue_id">>),
-        {ok, Media} ?= cx_params:require_bin(Params, <<"media_type">>),
+        ok ?= cx_authz:require(Context, <<"interactions:create">>),
+        {ok, QueueId} ?= cx_params:require_binary(Params, <<"queue_id">>),
+        {ok, Media} ?= cx_params:require_binary(Params, <<"media_type">>),
         ok ?= valid_media(Media),
         {ok, Props} ?= validate_properties(Params),
-        {ok, Queue} ?= cx_queue:fetch(T, QueueId),
+        {ok, Queue} ?= cx_queue:fetch(TenantId, QueueId),
         ok ?= open_queue(Queue),
-        {ok, QPid} ?= cx_queue_proc:ensure_started(T, QueueId),
-        {ok, IId} ?= call(QPid, {enqueue, cx_id:new(), Media, Props, cx_time:now_ms()}),
-        {ok, #{<<"id">> => IId}}
+        {ok, QueuePid} ?= cx_queue_process:ensure_started(TenantId, QueueId),
+        {ok, InteractionId} ?=
+            call(QueuePid, {enqueue, cx_id:new(), Media, Props, cx_time:now_ms()}),
+        {ok, #{<<"id">> => InteractionId}}
     end.
 
-cancel_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
+cancel_interaction(Context = #auth_context{tenant_id = TenantId}, InteractionId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"interactions:cancel">>),
-        {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
+        ok ?= cx_authz:require(Context, <<"interactions:cancel">>),
+        {ok, Rec} ?= cx_store:read(cx_interaction, {TenantId, InteractionId}),
         {_, QueueId} = Rec#cx_interaction.queue_key,
-        {ok, QPid} ?= cx_queue_proc:ensure_started(T, QueueId),
-        call(QPid, {cancel, IId})
+        {ok, QueuePid} ?= cx_queue_process:ensure_started(TenantId, QueueId),
+        call(QueuePid, {cancel, InteractionId})
     end.
 
-get_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
+get_interaction(Context = #auth_context{tenant_id = TenantId}, InteractionId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"interactions:read">>),
-        {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
+        ok ?= cx_authz:require(Context, <<"interactions:read">>),
+        {ok, Rec} ?= cx_store:read(cx_interaction, {TenantId, InteractionId}),
         {ok, interaction_to_map(Rec)}
     end.
 
+%% Tenant-wide, filterable, cursor-paginated. Filters arrive as the raw
+%% query-string map; unknown keys are ignored, malformed values are 422.
+%% An agent_id filter is served from the secondary index; the other
+%% listings still match-object the tenant and filter/sort in memory —
+%% M1 scale note: revisit that scan+sort when volume says so.
+list_interactions(Context = #auth_context{tenant_id = TenantId}, Filters) ->
+    maybe
+        ok ?= cx_authz:require(Context, <<"interactions:read">>),
+        {ok, Limit} ?= parse_limit(Filters),
+        ok ?= valid_filters(Filters),
+        Recs = candidate_interactions(TenantId, Filters),
+        Matching = [R || R <- Recs, matches_filters(R, Filters)],
+        Sorted = lists:sort(fun newest_first/2, Matching),
+        Page = page_after(Sorted, maps:get(<<"after">>, Filters, undefined), TenantId, Limit),
+        Next =
+            case length(Page) =:= Limit andalso Page =/= [] of
+                true -> element(2, (lists:last(Page))#cx_interaction.key);
+                false -> null
+            end,
+        {ok, #{
+            <<"items">> => [interaction_to_map(R) || R <- Page],
+            <<"next">> => Next
+        }}
+    end.
+
+%% One owned interaction (any phase, wrap-up included) through the
+%% agent's eyes. After finalize it leaves this surface — integrators
+%% keep the tenant-wide GET.
+agent_interaction(Context = #auth_context{tenant_id = TenantId}, InteractionId) ->
+    maybe
+        ok ?= cx_authz:require(Context, <<"agent:interactions:self">>),
+        {ok, Pid} ?= session_of(Context),
+        {ok, InteractionIds} ?= call(Pid, list_work),
+        true ?= lists:member(InteractionId, InteractionIds) orelse {error, not_found},
+        {ok, Rec} ?= cx_store:read(cx_interaction, {TenantId, InteractionId}),
+        {ok, interaction_to_map(Rec)}
+    end.
+
+%% The agent's own interactions in full detail — the rehydration surface
+%% a reconnecting client uses instead of replaying missed events. Dirty
+%% reads: the client resumes the event stream right after this snapshot,
+%% so a sync transaction per owned row bought consistency nobody sees.
+agent_interactions(Context = #auth_context{tenant_id = TenantId}) ->
+    maybe
+        ok ?= cx_authz:require(Context, <<"agent:interactions:self">>),
+        {ok, Pid} ?= session_of(Context),
+        {ok, InteractionIds} ?= call(Pid, list_work),
+        Recs = [
+            Rec
+         || InteractionId <- InteractionIds,
+            Rec <- [
+                case cx_store:dirty_read(cx_interaction, {TenantId, InteractionId}) of
+                    {ok, R} -> R;
+                    {error, not_found} -> undefined
+                end
+            ],
+            Rec =/= undefined
+        ],
+        {ok, [interaction_to_map(R) || R <- lists:sort(fun oldest_first/2, Recs)]}
+    end.
+
+-define(LIST_LIMIT_DEFAULT, 50).
+-define(LIST_LIMIT_MAX, 200).
+
+parse_limit(Filters) ->
+    case Filters of
+        #{<<"limit">> := Raw} when is_binary(Raw) ->
+            try binary_to_integer(Raw) of
+                N when N >= 1, N =< ?LIST_LIMIT_MAX -> {ok, N};
+                _ -> {error, {invalid, <<"limit">>}}
+            catch
+                error:badarg -> {error, {invalid, <<"limit">>}}
+            end;
+        #{<<"limit">> := _} ->
+            {error, {invalid, <<"limit">>}};
+        _ ->
+            {ok, ?LIST_LIMIT_DEFAULT}
+    end.
+
+valid_filters(Filters) ->
+    States = [
+        <<"queued">>,
+        <<"offered">>,
+        <<"active">>,
+        <<"held">>,
+        <<"wrapup">>,
+        <<"completed">>,
+        <<"cancelled">>
+    ],
+    maybe
+        ok ?=
+            case Filters of
+                #{<<"state">> := S} ->
+                    case lists:member(S, States) of
+                        true -> ok;
+                        false -> {error, {invalid, <<"state">>}}
+                    end;
+                _ ->
+                    ok
+            end,
+        case Filters of
+            #{<<"media_type">> := M} -> valid_media(M);
+            _ -> ok
+        end
+    end.
+
+%% The candidate set the in-memory filters run over: an agent_id filter
+%% narrows it via the secondary index instead of scanning the tenant.
+%% The index is node-global, NOT tenant-scoped — the key guard on the
+%% comprehension is the tenant boundary and is load-bearing.
+candidate_interactions(TenantId, #{<<"agent_id">> := AgentId}) ->
+    [
+        Rec
+     || Rec = #cx_interaction{key = {RowTenantId, _}} <-
+            cx_store:dirty_index_read(
+                cx_interaction, AgentId, #cx_interaction.agent_id
+            ),
+        RowTenantId =:= TenantId
+    ];
+candidate_interactions(TenantId, _Filters) ->
+    cx_store:dirty_list(cx_interaction, cx_patterns:interactions(TenantId)).
+
+matches_filters(Rec, Filters) ->
+    {_, QueueId} = Rec#cx_interaction.queue_key,
+    Checks = [
+        {<<"queue_id">>, QueueId},
+        {<<"state">>, atom_to_binary(Rec#cx_interaction.state)},
+        {<<"media_type">>, Rec#cx_interaction.media_type},
+        {<<"agent_id">>, Rec#cx_interaction.agent_id}
+    ],
+    lists:all(
+        fun({Key, Actual}) ->
+            case Filters of
+                #{Key := Want} -> Want =:= Actual;
+                _ -> true
+            end
+        end,
+        Checks
+    ).
+
+newest_first(A, B) ->
+    {A#cx_interaction.created_at, A#cx_interaction.key} >=
+        {B#cx_interaction.created_at, B#cx_interaction.key}.
+
+oldest_first(A, B) ->
+    {A#cx_interaction.accepted_at, A#cx_interaction.key} =<
+        {B#cx_interaction.accepted_at, B#cx_interaction.key}.
+
+%% Position-based cursoring: the cursor id resolves against the TABLE
+%% (not the filtered list) to its {created_at, key} sort position, so a
+%% cursor row that changed state between pages — and no longer matches
+%% the filters — still marks where the next page starts instead of
+%% silently ending the walk.
+page_after(Sorted, undefined, _TenantId, Limit) ->
+    lists:sublist(Sorted, Limit);
+page_after(Sorted, AfterId, TenantId, Limit) when is_binary(AfterId) ->
+    case cx_store:dirty_read(cx_interaction, {TenantId, AfterId}) of
+        {ok, Cursor = #cx_interaction{}} ->
+            Position = {Cursor#cx_interaction.created_at, Cursor#cx_interaction.key},
+            Rest = lists:dropwhile(
+                fun(R) ->
+                    {R#cx_interaction.created_at, R#cx_interaction.key} >= Position
+                end,
+                Sorted
+            ),
+            lists:sublist(Rest, Limit);
+        {error, not_found} ->
+            %% unknown/expired cursor: an empty page, never an error
+            []
+    end;
+page_after(_Sorted, _, _TenantId, _Limit) ->
+    [].
+
 %% ---- offer handling and completion (the agent side) ----
 
-accept_offer(Ctx, OfferId) ->
-    offer_op(Ctx, OfferId, accepted).
-
-reject_offer(Ctx, OfferId) ->
-    offer_op(Ctx, OfferId, rejected).
-
-offer_op(Ctx, OfferId, Op) ->
+%% A retried accept (response lost, client resent) is served from the
+%% session's recent-accept tombstones: same 200, same interaction_id.
+accept_offer(Context, OfferId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:offers:self">>),
-        {ok, Pid} ?= session_of(Ctx),
-        {ok, QueuePid} ?= call(Pid, {pending_queue, OfferId}),
-        call(QueuePid, {Op, OfferId})
+        ok ?= cx_authz:require(Context, <<"agent:offers:self">>),
+        {ok, Pid} ?= session_of(Context),
+        case call(Pid, {pending_queue, OfferId}) of
+            {ok, QueuePid} ->
+                case call(QueuePid, {accepted, OfferId}) of
+                    {ok, InteractionId} -> {ok, #{<<"interaction_id">> => InteractionId}};
+                    Error -> Error
+                end;
+            {recently_accepted, InteractionId} ->
+                {ok, #{<<"interaction_id">> => InteractionId}};
+            Error ->
+                Error
+        end
     end.
 
-complete(Ctx, IId) ->
+reject_offer(Context, OfferId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:offers:self">>),
-        {ok, Pid} ?= session_of(Ctx),
-        call(Pid, {complete, IId})
+        ok ?= cx_authz:require(Context, <<"agent:offers:self">>),
+        {ok, Pid} ?= session_of(Context),
+        case call(Pid, {pending_queue, OfferId}) of
+            {ok, QueuePid} -> call(QueuePid, {rejected, OfferId});
+            %% you already accepted it; rejecting now is a stale race
+            {recently_accepted, _} -> {error, expired};
+            Error -> Error
+        end
     end.
 
-%% ---- wrap-up ----
+%% Snapshot reads of pending (ringing) offers — the REST rehydration
+%% path; the WS events remain the push path. Resolved offers are gone
+%% (404), by design: an offer is an attempt, not a durable resource.
+list_offers(Context) ->
+    session_call(Context, <<"agent:offers:self">>, list_offers).
 
-extend_wrapup(Ctx, ExtraMs) when is_integer(ExtraMs), ExtraMs > 0 ->
+get_offer(Context, OfferId) ->
+    session_call(Context, <<"agent:offers:self">>, {get_offer, OfferId}).
+
+%% ---- owned-interaction operations ----
+
+%% Retried complete: the session no longer knows the interaction, but if
+%% the row says this agent already completed it, the desired state holds.
+complete(Context, InteractionId) ->
+    case session_call(Context, <<"agent:interactions:self">>, {complete, InteractionId}) of
+        {error, not_found} -> completed_by_me(Context, InteractionId);
+        Result -> Result
+    end.
+
+hold(Context, InteractionId) ->
+    session_call(Context, <<"agent:interactions:self">>, {hold, InteractionId}).
+
+resume(Context, InteractionId) ->
+    session_call(Context, <<"agent:interactions:self">>, {resume, InteractionId}).
+
+%% PUT-semantics: the given list REPLACES the interaction's codes ([]
+%% clears them). Any active node of the tenant's tree is selectable.
+qualify(Context = #auth_context{tenant_id = TenantId}, InteractionId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:wrapup:self">>),
-        {ok, Pid} ?= session_of(Ctx),
-        call(Pid, {extend_wrapup, ExtraMs})
-    end;
-extend_wrapup(_Ctx, _) ->
+        ok ?= cx_authz:require(Context, <<"agent:interactions:self">>),
+        {ok, Ids} ?= parse_qualification_ids(Params),
+        ok ?= validate_qualifications(TenantId, Ids),
+        {ok, Pid} ?= session_of(Context),
+        call(Pid, {qualify, InteractionId, Ids})
+    end.
+
+parse_qualification_ids(Params) ->
+    case Params of
+        #{<<"qualification_ids">> := Ids} when is_list(Ids) ->
+            case lists:all(fun(Id) -> is_binary(Id) andalso Id =/= <<>> end, Ids) of
+                true -> {ok, lists:usort(Ids)};
+                false -> {error, {invalid, <<"qualification_ids">>}}
+            end;
+        _ ->
+            {error, {invalid, <<"qualification_ids">>}}
+    end.
+
+validate_qualifications(_T, []) ->
+    ok;
+validate_qualifications(TenantId, [Id | Rest]) ->
+    case cx_qualification_code:fetch(TenantId, Id) of
+        {ok, #cx_qualification_code{active = true}} -> validate_qualifications(TenantId, Rest);
+        {ok, #cx_qualification_code{active = false}} -> {error, {invalid, <<"qualification_ids">>}};
+        {error, not_found} -> {error, {invalid, <<"qualification_ids">>}}
+    end.
+
+%% ---- after-call work (per interaction) ----
+
+extend_wrapup(Context, InteractionId, ExtraMs) when is_integer(ExtraMs), ExtraMs > 0 ->
+    session_call(Context, <<"agent:wrapup:self">>, {extend_wrapup, InteractionId, ExtraMs});
+extend_wrapup(_Ctx, _InteractionId, _) ->
     {error, {invalid, <<"extend_ms">>}}.
 
-cancel_wrapup(Ctx) ->
+finalize_wrapup(Context, InteractionId) ->
+    case session_call(Context, <<"agent:wrapup:self">>, {finalize_wrapup, InteractionId}) of
+        {error, not_found} -> completed_by_me(Context, InteractionId);
+        Result -> Result
+    end.
+
+session_call(Context, Permission, Msg) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"agent:wrapup:self">>),
-        {ok, Pid} ?= session_of(Ctx),
-        call(Pid, cancel_wrapup)
+        ok ?= cx_authz:require(Context, Permission),
+        {ok, Pid} ?= session_of(Context),
+        call(Pid, Msg)
+    end.
+
+completed_by_me(#auth_context{tenant_id = TenantId, user_id = UserId}, InteractionId) ->
+    case cx_store:read(cx_interaction, {TenantId, InteractionId}) of
+        {ok, #cx_interaction{state = completed, agent_id = UserId}} when
+            UserId =/= undefined
+        ->
+            ok;
+        _ ->
+            {error, not_found}
     end.
 
 %% ---- helpers ----
 
-session_of(#auth_ctx{tenant_id = T, user_id = UserId}) ->
+session_of(#auth_context{tenant_id = TenantId, user_id = UserId}) ->
     case
         UserId =/= undefined andalso
-            cx_reg:whereis_name({agent, T, UserId})
+            cx_registry:whereis_name({agent, TenantId, UserId})
     of
         Pid when is_pid(Pid) -> {ok, Pid};
         _ -> {error, no_session}
@@ -176,10 +455,10 @@ active_user(#cx_user{}) -> {error, forbidden}.
 load_profile(_T, undefined) ->
     %% no profile configured: nothing is limited (the superhuman default)
     {ok, #cx_routing_profile{key = {<<>>, <<>>}, name = <<"unlimited">>}};
-load_profile(T, ProfileId) ->
+load_profile(TenantId, ProfileId) ->
     %% a configured-but-missing profile fails CLOSED: refusing the session
     %% is recoverable, silently substituting unlimited capacity is not
-    case cx_routing_profile:fetch(T, ProfileId) of
+    case cx_routing_profile:fetch(TenantId, ProfileId) of
         {ok, Profile} -> {ok, Profile};
         {error, not_found} -> {error, profile_missing}
     end.
@@ -188,7 +467,7 @@ open_queue(#cx_queue{status = open}) -> ok;
 open_queue(#cx_queue{}) -> {error, queue_closed}.
 
 validate_properties(Params) ->
-    case cx_params:opt_map(Params, <<"properties">>, #{}) of
+    case cx_params:optional_map(Params, <<"properties">>, #{}) of
         {ok, Props} ->
             Valid = lists:all(
                 fun({K, V}) -> is_binary(K) andalso is_binary(V) end,
@@ -212,6 +491,9 @@ interaction_to_map(#cx_interaction{
     created_at = CreatedAt,
     enqueued_at = EnqueuedAt,
     accepted_at = AcceptedAt,
+    wrapup_started_at = WrapupStartedAt,
+    wrapup_until = WrapupUntil,
+    qualification_ids = QualificationIds,
     completed_at = CompletedAt
 }) ->
     #{
@@ -224,5 +506,8 @@ interaction_to_map(#cx_interaction{
         <<"created_at">> => CreatedAt,
         <<"enqueued_at">> => EnqueuedAt,
         <<"accepted_at">> => cx_json:undef_to_null(AcceptedAt),
+        <<"wrapup_started_at">> => cx_json:undef_to_null(WrapupStartedAt),
+        <<"wrapup_until">> => cx_json:undef_to_null(WrapupUntil),
+        <<"qualification_ids">> => QualificationIds,
         <<"completed_at">> => cx_json:undef_to_null(CompletedAt)
     }.

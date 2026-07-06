@@ -5,15 +5,15 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, fetch_by_subject/2, to_map/1]).
 
-create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
-        {ok, Email} ?= cx_params:require_bin(Params, <<"email">>),
-        {ok, Subject} ?= cx_params:opt_bin(Params, <<"subject">>, undefined),
+        ok ?= cx_authz:require(Context, <<"users:write">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
+        {ok, Email} ?= cx_params:require_binary(Params, <<"email">>),
+        {ok, Subject} ?= cx_params:optional_binary(Params, <<"subject">>, undefined),
         {ok, RoleIds} ?= opt_bin_list(Params, <<"role_ids">>),
         {ok, Skills} ?= opt_skills(Params),
-        {ok, ProfileId} ?= cx_params:opt_bin(Params, <<"routing_profile_id">>, undefined),
+        {ok, ProfileId} ?= cx_params:optional_binary(Params, <<"routing_profile_id">>, undefined),
         Now = cx_time:now_ms(),
         Rec = #cx_user{
             key = {T, cx_id:new()},
@@ -32,37 +32,37 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, to_map(Rec)}
     end.
 
-get(Ctx = #auth_ctx{tenant_id = T}, UserId) ->
+get(Context = #auth_context{tenant_id = T}, UserId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:read">>),
+        ok ?= cx_authz:require(Context, <<"users:read">>),
         {ok, Rec} ?= cx_store:read(cx_user, {T, UserId}),
         {ok, to_map(Rec)}
     end.
 
-list(Ctx = #auth_ctx{tenant_id = T}) ->
+list(Context = #auth_context{tenant_id = T}) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:read">>),
+        ok ?= cx_authz:require(Context, <<"users:read">>),
         Recs = cx_store:list(cx_user, cx_patterns:users(T)),
         {ok, [to_map(R) || R <- Recs]}
     end.
 
-update(Ctx = #auth_ctx{tenant_id = T}, UserId, Params) ->
+update(Context = #auth_context{tenant_id = T}, UserId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:write">>),
+        ok ?= cx_authz:require(Context, <<"users:write">>),
         {ok, Rec0} ?= cx_store:read(cx_user, {T, UserId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_user.name),
-        {ok, Email} ?= cx_params:opt_bin(Params, <<"email">>, Rec0#cx_user.email),
-        {ok, Subject} ?= cx_params:opt_bin(Params, <<"subject">>, Rec0#cx_user.subject),
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_user.name),
+        {ok, Email} ?= cx_params:optional_binary(Params, <<"email">>, Rec0#cx_user.email),
+        {ok, Subject} ?= cx_params:optional_binary(Params, <<"subject">>, Rec0#cx_user.subject),
         {ok, RoleIds} ?= opt_bin_list(Params, <<"role_ids">>, Rec0#cx_user.role_ids),
         {ok, Skills} ?= opt_skills(Params, Rec0#cx_user.skills),
         {ok, ProfileId} ?=
-            cx_params:opt_bin(
+            cx_params:optional_binary(
                 Params,
                 <<"routing_profile_id">>,
                 Rec0#cx_user.routing_profile_id
             ),
         {ok, Status} ?=
-            cx_params:opt_atom(
+            cx_params:optional_atom(
                 Params,
                 <<"status">>,
                 [active, disabled],
@@ -83,9 +83,9 @@ update(Ctx = #auth_ctx{tenant_id = T}, UserId, Params) ->
         {ok, to_map(Rec)}
     end.
 
-delete(Ctx = #auth_ctx{tenant_id = T}, UserId) ->
+delete(Context = #auth_context{tenant_id = T}, UserId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:write">>),
+        ok ?= cx_authz:require(Context, <<"users:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_user, {T, UserId}) of
@@ -150,7 +150,7 @@ opt_bin_list(Params, Key) ->
     opt_bin_list(Params, Key, []).
 
 opt_bin_list(Params, Key, Default) ->
-    case cx_params:opt_list(Params, Key, Default) of
+    case cx_params:optional_list(Params, Key, Default) of
         {ok, L} ->
             case lists:all(fun is_binary/1, L) of
                 true -> {ok, L};

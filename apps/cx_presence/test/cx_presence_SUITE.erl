@@ -62,9 +62,9 @@ end_per_suite(_Config) ->
 
 declared_persists_restart(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     {ok, #{<<"manual_state">> := <<"busy">>, <<"message">> := <<"In Spain">>}} =
-        cx_presence:set_own(Ctx, #{
+        cx_presence:set_own(Context, #{
             <<"state">> => <<"busy">>, <<"message">> => <<"In Spain">>
         }),
     ok = application:stop(cx_presence),
@@ -75,62 +75,62 @@ declared_persists_restart(_Config) ->
         <<"state">> := <<"offline">>,
         <<"manual_state">> := <<"busy">>,
         <<"message">> := <<"In Spain">>
-    }} = cx_presence:get_own(Ctx),
+    }} = cx_presence:get_own(Context),
     ok.
 
 connect_publishes_online(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
     Conn = spawn_conn(),
-    {ok, _Pid} = cx_presence:connected(Ctx, Conn, #{}),
+    {ok, _Pid} = cx_presence:connected(Context, Conn, #{}),
     {ok, #{<<"user_id">> := UserId, <<"state">> := <<"online">>}} =
         wait_presence(),
     {ok, #{<<"state">> := <<"online">>, <<"device_count">> := 1}} =
-        cx_presence:get_own(Ctx),
+        cx_presence:get_own(Context),
     stop_conn(Conn),
     ok.
 
 disconnect_publishes_offline_and_stops(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
     Conn = spawn_conn(),
-    {ok, _} = cx_presence:connected(Ctx, Conn, #{}),
+    {ok, _} = cx_presence:connected(Context, Conn, #{}),
     {ok, _} = wait_presence(),
-    ok = cx_presence:disconnected(Ctx, Conn),
+    ok = cx_presence:disconnected(Context, Conn),
     {ok, #{<<"user_id">> := UserId, <<"state">> := <<"offline">>}} =
         wait_presence(),
     ok = wait_until(fun() ->
-        cx_reg:whereis_name({presence, T, UserId}) =:= undefined
+        cx_registry:whereis_name({presence, T, UserId}) =:= undefined
     end),
-    ?assertEqual([], mnesia:dirty_read(cx_presence_eff, {T, UserId})),
+    ?assertEqual([], mnesia:dirty_read(cx_presence_effective, {T, UserId})),
     stop_conn(Conn),
     ok.
 
 away_timer_flow(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
     Conn = spawn_conn(),
-    {ok, _} = cx_presence:connected(Ctx, Conn, #{}),
+    {ok, _} = cx_presence:connected(Context, Conn, #{}),
     {ok, #{<<"state">> := <<"online">>}} = wait_presence(),
     %% no activity: the away timer fires after the (short) threshold
     {ok, #{<<"user_id">> := UserId, <<"state">> := <<"away">>}} =
         wait_presence(2000),
-    ok = cx_presence:activity(Ctx),
+    ok = cx_presence:activity(Context),
     {ok, #{<<"state">> := <<"online">>}} = wait_presence(),
     stop_conn(Conn),
     ok.
 
 until_expiry_with_session(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
     Conn = spawn_conn(),
-    {ok, _} = cx_presence:connected(Ctx, Conn, #{}),
+    {ok, _} = cx_presence:connected(Context, Conn, #{}),
     {ok, #{<<"state">> := <<"online">>}} = wait_presence(),
-    {ok, _} = cx_presence:set_own(Ctx, #{
+    {ok, _} = cx_presence:set_own(Context, #{
         <<"state">> => <<"dnd">>, <<"until">> => cx_time:now_ms() + 400
     }),
     {ok, #{<<"state">> := <<"dnd">>}} = wait_presence(),
@@ -142,9 +142,9 @@ until_expiry_with_session(_Config) ->
 
 until_expiry_lazy_offline(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
-    {ok, _} = cx_presence:set_own(Ctx, #{
+    {ok, _} = cx_presence:set_own(Context, #{
         <<"state">> => <<"out_of_office">>,
         <<"message">> => <<"In Spain">>,
         <<"until">> => cx_time:now_ms() + 300
@@ -155,28 +155,28 @@ until_expiry_lazy_offline(_Config) ->
     timer:sleep(400),
     %% lazily expired at read time: message gone, still offline
     {ok, #{<<"state">> := <<"offline">>, <<"message">> := null, <<"until">> := null}} =
-        cx_presence:get_own(Ctx),
+        cx_presence:get_own(Context),
     %% and no presence_changed fired at the expiry moment
     ?assertEqual(timeout, wait_presence(300)),
     ok.
 
 multi_device(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
     Desktop = spawn_conn(),
     Mobile = spawn_conn(),
-    {ok, _} = cx_presence:connected(Ctx, Desktop, #{device => <<"desktop">>}),
+    {ok, _} = cx_presence:connected(Context, Desktop, #{device => <<"desktop">>}),
     {ok, #{<<"state">> := <<"online">>}} = wait_presence(),
-    {ok, _} = cx_presence:connected(Ctx, Mobile, #{device => <<"mobile">>}),
-    {ok, #{<<"device_count">> := 2}} = cx_presence:get_own(Ctx),
+    {ok, _} = cx_presence:connected(Context, Mobile, #{device => <<"mobile">>}),
+    {ok, #{<<"device_count">> := 2}} = cx_presence:get_own(Context),
     %% one device leaving changes nothing outward (activity first so the
     %% short away threshold can't fire inside the negative window)
-    ok = cx_presence:activity(Ctx),
-    ok = cx_presence:disconnected(Ctx, Desktop),
+    ok = cx_presence:activity(Context),
+    ok = cx_presence:disconnected(Context, Desktop),
     ?assertEqual(timeout, wait_presence(150)),
     {ok, #{<<"device_count">> := 1, <<"state">> := <<"online">>}} =
-        cx_presence:get_own(Ctx),
+        cx_presence:get_own(Context),
     %% the second dying (monitor path) takes the user offline
     stop_conn(Mobile),
     {ok, #{<<"user_id">> := UserId, <<"state">> := <<"offline">>}} =
@@ -186,65 +186,65 @@ multi_device(_Config) ->
 
 session_crash_reregister(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
     Conn = spawn_conn(),
-    {ok, SessPid} = cx_presence:connected(Ctx, Conn, #{}),
+    {ok, SessPid} = cx_presence:connected(Context, Conn, #{}),
     {ok, #{<<"state">> := <<"online">>}} = wait_presence(),
     exit(SessPid, kill),
     ok = wait_until(fun() -> not is_process_alive(SessPid) end),
     %% the transport contract: the surviving connection re-registers
-    {ok, NewPid} = cx_presence:connected(Ctx, Conn, #{}),
+    {ok, NewPid} = cx_presence:connected(Context, Conn, #{}),
     ?assertNotEqual(SessPid, NewPid),
     {ok, #{<<"state">> := <<"online">>, <<"device_count">> := 1}} =
-        cx_presence:get_own(Ctx),
-    [#cx_presence_eff{pid = NewPid}] =
-        mnesia:dirty_read(cx_presence_eff, {T, UserId}),
+        cx_presence:get_own(Context),
+    [#cx_presence_effective{pid = NewPid}] =
+        mnesia:dirty_read(cx_presence_effective, {T, UserId}),
     stop_conn(Conn),
     ok.
 
 set_while_connected(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
+    Context = user_context(T, UserId),
     ok = cx_event:subscribe(T),
     Conn = spawn_conn(),
-    {ok, _} = cx_presence:connected(Ctx, Conn, #{}),
+    {ok, _} = cx_presence:connected(Context, Conn, #{}),
     {ok, #{<<"state">> := <<"online">>}} = wait_presence(),
     {ok, #{<<"state">> := <<"dnd">>}} =
-        cx_presence:set_own(Ctx, #{<<"state">> => <<"dnd">>}),
+        cx_presence:set_own(Context, #{<<"state">> => <<"dnd">>}),
     {ok, #{<<"user_id">> := UserId, <<"state">> := <<"dnd">>}} = wait_presence(),
-    {ok, _} = cx_presence:set_own(Ctx, #{}),
+    {ok, _} = cx_presence:set_own(Context, #{}),
     {ok, #{<<"state">> := <<"online">>}} = wait_presence(),
     stop_conn(Conn),
     ok.
 
 validation_and_permissions(_Config) ->
     {T, UserId} = mk_user(),
-    Ctx = user_ctx(T, UserId),
-    NoPerms = cx_authz:ctx(T, UserId, <<"s">>, []),
-    Integrator = cx_authz:ctx(T, [<<"presence:set:self">>]),
+    Context = user_context(T, UserId),
+    NoPerms = cx_authz:context(T, UserId, <<"s">>, []),
+    Integrator = cx_authz:context(T, [<<"presence:set:self">>]),
     ?assertEqual({error, forbidden}, cx_presence:set_own(NoPerms, #{})),
     ?assertEqual({error, no_user}, cx_presence:set_own(Integrator, #{})),
     ?assertEqual(
         {error, {invalid, <<"state">>}},
-        cx_presence:set_own(Ctx, #{<<"state">> => <<"invisible">>})
+        cx_presence:set_own(Context, #{<<"state">> => <<"invisible">>})
     ),
     ?assertEqual(
         {error, {invalid, <<"until">>}},
-        cx_presence:set_own(Ctx, #{
+        cx_presence:set_own(Context, #{
             <<"state">> => <<"busy">>, <<"until">> => cx_time:now_ms() - 1
         })
     ),
     %% until with nothing to expire is meaningless
     ?assertEqual(
         {error, {invalid, <<"until">>}},
-        cx_presence:set_own(Ctx, #{<<"until">> => cx_time:now_ms() + 10000})
+        cx_presence:set_own(Context, #{<<"until">> => cx_time:now_ms() + 10000})
     ),
     ok.
 
 directory_mixed(_Config) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     Connected = create_user(Admin, <<"Connected">>),
     Away = create_user(Admin, <<"Vacationer">>),
     Plain = create_user(Admin, <<"Plain">>),
@@ -252,12 +252,12 @@ directory_mixed(_Config) ->
     {ok, _} = cx_user:update(Admin, Disabled, #{<<"status">> => <<"disabled">>}),
 
     Conn = spawn_conn(),
-    {ok, _} = cx_presence:connected(user_ctx(T, Connected), Conn, #{}),
-    {ok, _} = cx_presence:set_own(user_ctx(T, Away), #{
+    {ok, _} = cx_presence:connected(user_context(T, Connected), Conn, #{}),
+    {ok, _} = cx_presence:set_own(user_context(T, Away), #{
         <<"state">> => <<"out_of_office">>, <<"message">> => <<"In Spain">>
     }),
 
-    {ok, Entries} = cx_presence:directory(user_ctx(T, Plain)),
+    {ok, Entries} = cx_presence:directory(user_context(T, Plain)),
     ByUser = maps:from_list([{maps:get(<<"user_id">>, E), E} || E <- Entries]),
     ?assertEqual(3, map_size(ByUser)),
     ?assertNot(maps:is_key(Disabled, ByUser)),
@@ -272,7 +272,7 @@ directory_mixed(_Config) ->
 
 mk_user() ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     {T, create_user(Admin, <<"Agent">>)}.
 
 create_user(Admin, Name) ->
@@ -280,8 +280,8 @@ create_user(Admin, Name) ->
         cx_user:create(Admin, #{<<"name">> => Name, <<"email">> => <<"a@x">>}),
     Id.
 
-user_ctx(T, UserId) ->
-    cx_authz:ctx(T, UserId, <<"sub-", UserId/binary>>, [<<"presence:set:self">>]).
+user_context(T, UserId) ->
+    cx_authz:context(T, UserId, <<"sub-", UserId/binary>>, [<<"presence:set:self">>]).
 
 spawn_conn() ->
     spawn(fun Loop() ->

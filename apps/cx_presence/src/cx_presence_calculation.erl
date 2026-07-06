@@ -1,4 +1,4 @@
--module(cx_presence_calc).
+-module(cx_presence_calculation).
 
 %% The pure core of collaboration presence: effective presence is
 %% COMPUTED from the declared layer (durable) plus live connectivity
@@ -19,10 +19,10 @@
 -export_type([declared/0, effective/0]).
 
 %% Declared layer from a raw row; row absence == fully automatic.
--spec from_row(#cx_presence_decl{} | undefined) -> declared().
+-spec from_row(#cx_presence_declaration{} | undefined) -> declared().
 from_row(undefined) ->
     #{manual_state => undefined, message => undefined, until => undefined};
-from_row(#cx_presence_decl{manual_state = S, message = M, until = U}) ->
+from_row(#cx_presence_declaration{manual_state = S, message = M, until = U}) ->
     #{manual_state => S, message => M, until => U}.
 
 %% Strip an expired manual layer: once Until =< Now, manual_state and
@@ -64,7 +64,7 @@ effective(Declared0, DeviceCount, LastActivityMs, NowMs, AwayThresholdMs) ->
 %% declared row is the entire input (no devices, no activity). Bundles
 %% the normalized `until` with state/message — the three values every
 %% connectionless read (directory, own-map, facade publish) needs.
--spec connectionless(#cx_presence_decl{} | undefined, integer(), pos_integer()) ->
+-spec connectionless(#cx_presence_declaration{} | undefined, integer(), pos_integer()) ->
     #{
         state := binary(),
         message := binary() | undefined,

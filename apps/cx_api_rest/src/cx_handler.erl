@@ -1,4 +1,4 @@
--module(cx_h).
+-module(cx_handler).
 
 %% Shared handler plumbing: JSON body reading and the single place where
 %% domain errors map to HTTP statuses. Handlers stay thin: decode ->
@@ -34,10 +34,14 @@ status(in_use) -> 409;
 status(profile_missing) -> 409;
 status(not_cancellable) -> 409;
 status(expired) -> 409;
-status(already_started) -> 409;
 status(queue_closed) -> 409;
 status(has_active_interactions) -> 409;
 status(not_in_wrapup) -> 409;
+status(not_active) -> 409;
+status(not_held) -> 409;
+status(conflict) -> 409;
+status(wrapup_cap_exceeded) -> 409;
+status(qualification_required) -> 409;
 status({invalid, json}) -> 400;
 status({invalid, _Field}) -> 422;
 status(_) -> 500.
@@ -62,15 +66,15 @@ with_body(Req0, Fun) ->
         _ -> {{error, {invalid, json}}, Req1}
     end.
 
-%% Admin routes carry :tid. Operating on your own tenant is the normal
-%% case; operating on another requires tenants:admin, and the ctx is
+%% Admin routes carry :tenant_id. Operating on your own tenant is the normal
+%% case; operating on another requires tenants:admin, and the context is
 %% rescoped to the path tenant so every downstream key is built from it.
--spec scope_tenant(#auth_ctx{}, binary()) ->
-    {ok, #auth_ctx{}} | {error, forbidden}.
-scope_tenant(Ctx = #auth_ctx{tenant_id = Tid}, Tid) ->
-    {ok, Ctx};
-scope_tenant(Ctx, Tid) ->
-    case cx_authz:has(Ctx, <<"tenants:admin">>) of
-        true -> {ok, Ctx#auth_ctx{tenant_id = Tid}};
+-spec scope_tenant(#auth_context{}, binary()) ->
+    {ok, #auth_context{}} | {error, forbidden}.
+scope_tenant(Context = #auth_context{tenant_id = TenantId}, TenantId) ->
+    {ok, Context};
+scope_tenant(Context, TenantId) ->
+    case cx_authz:has(Context, <<"tenants:admin">>) of
+        true -> {ok, Context#auth_context{tenant_id = TenantId}};
         false -> {error, forbidden}
     end.
