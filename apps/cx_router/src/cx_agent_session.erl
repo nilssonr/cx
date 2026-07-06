@@ -295,8 +295,18 @@ handle_event({call, From}, {complete, InteractionId}, _State, Data) ->
                             {keep_state_and_data, [{reply, From, {error, conflict}}]}
                     end
             end;
-        #{InteractionId := _} ->
-            {keep_state_and_data, [{reply, From, {error, not_active}}]};
+        %% a retried complete (lost response) finds the work already in
+        %% ACW — idempotent success with the current wrap-up payload
+        #{InteractionId := #work{phase = wrapup, wrapup_until = Until0}} when
+            is_integer(Until0)
+        ->
+            {keep_state_and_data, [
+                {reply, From,
+                    {ok, #{
+                        <<"state">> => <<"wrapup">>,
+                        <<"wrapup_until">> => Until0
+                    }}}
+            ]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
     end;
