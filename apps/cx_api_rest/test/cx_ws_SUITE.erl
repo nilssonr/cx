@@ -103,7 +103,7 @@ offer_event_targeted(Config) ->
     ok = cx_router:set_ready(AgentA, <<"open_media">>, ready),
 
     Integrator = cx_authz:ctx(T, [<<"interactions:create">>]),
-    {ok, #{<<"id">> := IId}} =
+    {ok, #{<<"id">> := InteractionId}} =
         cx_router:create_interaction(Integrator, #{
             <<"queue_id">> => QueueId, <<"media_type">> => <<"open_media">>
         }),
@@ -111,7 +111,7 @@ offer_event_targeted(Config) ->
     %% A's socket sees the offer for A's interaction
     #{
         <<"type">> := <<"offer_created">>,
-        <<"data">> := #{<<"interaction_id">> := IId, <<"agent_id">> := UserA}
+        <<"data">> := #{<<"interaction_id">> := InteractionId, <<"agent_id">> := UserA}
     } = ws_wait_event(ConnA, StreamA, <<"offer_created">>, 3000),
 
     %% B saw no offer: a marker event published after proves ordering

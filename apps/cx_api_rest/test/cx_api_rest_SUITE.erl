@@ -319,7 +319,7 @@ agent_open_media_flow(Config) ->
     ),
 
     %% integrator: "put this request on this queue"
-    {200, #{<<"id">> := IId}} =
+    {200, #{<<"id">> := InteractionId}} =
         req(
             Config,
             post,
@@ -335,7 +335,7 @@ agent_open_media_flow(Config) ->
     %% the offer shows up on the agent session (the WS transport pushes
     %% it too; polling the session stays a supported REST pattern)
     {ok, OfferId} = poll_offer(Config, Agent),
-    {200, #{<<"interaction_id">> := IId}} = req(
+    {200, #{<<"interaction_id">> := InteractionId}} = req(
         Config,
         post,
         "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
@@ -349,14 +349,14 @@ agent_open_media_flow(Config) ->
         req(
             Config,
             get,
-            "/api/v1/interactions/" ++ binary_to_list(IId),
+            "/api/v1/interactions/" ++ binary_to_list(InteractionId),
             Integrator
         ),
 
     {204, _} = req(
         Config,
         post,
-        "/api/v1/agent/interactions/" ++ binary_to_list(IId) ++
+        "/api/v1/agent/interactions/" ++ binary_to_list(InteractionId) ++
             "/complete",
         Agent,
         #{}
@@ -365,7 +365,7 @@ agent_open_media_flow(Config) ->
         req(
             Config,
             get,
-            "/api/v1/interactions/" ++ binary_to_list(IId),
+            "/api/v1/interactions/" ++ binary_to_list(InteractionId),
             Integrator
         ),
     {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
@@ -424,20 +424,20 @@ qualification_wrapup_flow(Config) ->
         Agent,
         #{<<"state">> => <<"ready">>}
     ),
-    {200, #{<<"id">> := IId}} =
+    {200, #{<<"id">> := InteractionId}} =
         req(Config, post, "/api/v1/interactions", Integrator, #{
             <<"queue_id">> => QueueId,
             <<"media_type">> => <<"open_media">>
         }),
     {ok, OfferId} = poll_offer(Config, Agent),
-    {200, #{<<"interaction_id">> := IId}} = req(
+    {200, #{<<"interaction_id">> := InteractionId}} = req(
         Config,
         post,
         "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
         Agent,
         #{}
     ),
-    IPath = "/api/v1/agent/interactions/" ++ binary_to_list(IId),
+    IPath = "/api/v1/agent/interactions/" ++ binary_to_list(InteractionId),
 
     %% hold/resume ride along over HTTP
     {204, _} = req(Config, post, IPath ++ "/hold", Agent, #{}),
@@ -468,7 +468,7 @@ qualification_wrapup_flow(Config) ->
         req(
             Config,
             get,
-            "/api/v1/interactions/" ++ binary_to_list(IId),
+            "/api/v1/interactions/" ++ binary_to_list(InteractionId),
             Integrator
         ),
     {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
@@ -514,7 +514,7 @@ self_force_sign_out_qualification_409(Config) ->
         Agent,
         #{<<"state">> => <<"ready">>}
     ),
-    {200, #{<<"id">> := IId}} =
+    {200, #{<<"id">> := InteractionId}} =
         req(Config, post, "/api/v1/interactions", Integrator, #{
             <<"queue_id">> => QueueId,
             <<"media_type">> => <<"open_media">>
@@ -531,7 +531,7 @@ self_force_sign_out_qualification_409(Config) ->
         req(
             Config,
             post,
-            "/api/v1/agent/interactions/" ++ binary_to_list(IId) ++ "/complete",
+            "/api/v1/agent/interactions/" ++ binary_to_list(InteractionId) ++ "/complete",
             Agent,
             #{}
         ),
@@ -773,7 +773,7 @@ integrator_cancel_rules(Config) ->
         ]
     ),
 
-    {200, #{<<"id">> := IId}} =
+    {200, #{<<"id">> := InteractionId}} =
         req(
             Config,
             post,
@@ -781,7 +781,7 @@ integrator_cancel_rules(Config) ->
             Integrator,
             #{<<"queue_id">> => QueueId, <<"media_type">> => MediaId}
         ),
-    Path = "/api/v1/interactions/" ++ binary_to_list(IId),
+    Path = "/api/v1/interactions/" ++ binary_to_list(InteractionId),
     %% cancel is a state transition, not a resource removal: POST verb,
     %% and the row remains readable as `cancelled`
     {204, _} = req(Config, post, Path ++ "/cancel", Integrator, #{}),
@@ -853,9 +853,9 @@ boss_token(Config, TenantId) ->
         <<"urn:zitadel:iam:org:id">> => TenantId
     }).
 
-%% Creates a user with a role carrying Perms (via a boss token), then
+%% Creates a user with a role carrying Permissions (via a boss token), then
 %% mints a token for that user's subject.
-user_token(Config, TenantId, Subject, Perms) ->
+user_token(Config, TenantId, Subject, Permissions) ->
     Admin = boss_token(Config, TenantId),
     Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
     {200, #{<<"id">> := RoleId}} =
@@ -866,7 +866,7 @@ user_token(Config, TenantId, Subject, Perms) ->
             Admin,
             #{
                 <<"name">> => <<"role-", Subject/binary>>,
-                <<"permissions">> => Perms
+                <<"permissions">> => Permissions
             }
         ),
     {200, #{<<"id">> := _}} =

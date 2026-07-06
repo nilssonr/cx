@@ -8,12 +8,12 @@
 -export([has/2, require/2, require_user/1, ctx/2, ctx/4]).
 
 -spec has(#auth_context{}, binary()) -> boolean().
-has(#auth_context{permissions = Perms}, Perm) ->
-    sets:is_element(<<"*">>, Perms) orelse sets:is_element(Perm, Perms).
+has(#auth_context{permissions = Permissions}, Permission) ->
+    sets:is_element(<<"*">>, Permissions) orelse sets:is_element(Permission, Permissions).
 
 -spec require(#auth_context{}, binary()) -> ok | {error, forbidden}.
-require(Ctx, Perm) ->
-    case has(Ctx, Perm) of
+require(Ctx, Permission) ->
+    case has(Ctx, Permission) of
         true -> ok;
         false -> {error, forbidden}
     end.
@@ -26,14 +26,14 @@ require_user(#auth_context{}) -> ok.
 
 %% Constructors, mainly for tests and internal callers.
 -spec ctx(binary(), [binary()]) -> #auth_context{}.
-ctx(TenantId, Perms) ->
-    ctx(TenantId, undefined, undefined, Perms).
+ctx(TenantId, Permissions) ->
+    ctx(TenantId, undefined, undefined, Permissions).
 
 -spec ctx(binary(), binary() | undefined, binary() | undefined, [binary()]) -> #auth_context{}.
-ctx(TenantId, UserId, Subject, Perms) ->
+ctx(TenantId, UserId, Subject, Permissions) ->
     #auth_context{
         tenant_id = TenantId,
         user_id = UserId,
         subject = Subject,
-        permissions = sets:from_list(Perms)
+        permissions = sets:from_list(Permissions)
     }.

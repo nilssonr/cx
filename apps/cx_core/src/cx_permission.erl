@@ -50,5 +50,5 @@ platform_only() ->
     [<<"tenants:admin">>].
 
 -spec is_tenant_assignable(term()) -> boolean().
-is_tenant_assignable(Perm) ->
-    lists:member(Perm, tenant_assignable()).
+is_tenant_assignable(Permission) ->
+    lists:member(Permission, tenant_assignable()).

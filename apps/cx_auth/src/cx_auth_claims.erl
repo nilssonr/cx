@@ -65,7 +65,7 @@ resolve_user(TenantId, Subject, Claims) ->
 %% write time, and this filter neutralizes any row that predates that
 %% check (or was written around it) without needing a data migration.
 role_permissions(TenantId, RoleIds) ->
-    Perms = lists:flatmap(
+    Permissions = lists:flatmap(
         fun(RoleId) ->
             case cx_role:fetch(TenantId, RoleId) of
                 {ok, #cx_role{permissions = Ps}} -> Ps;
@@ -74,4 +74,4 @@ role_permissions(TenantId, RoleIds) ->
         end,
         RoleIds
     ),
-    sets:from_list([P || P <- Perms, cx_permission:is_tenant_assignable(P)]).
+    sets:from_list([P || P <- Permissions, cx_permission:is_tenant_assignable(P)]).

@@ -1487,7 +1487,7 @@ infinite_ring_offer_stays_pending(_Config) ->
     Agent = start_agent(T, UserId),
     ok = cx_router:set_ready(Agent, Media, ready),
     Integrator = integrator(T),
-    {ok, #{<<"id">> := IId}} =
+    {ok, #{<<"id">> := InteractionId}} =
         cx_router:create_interaction(
             Integrator,
             #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
@@ -1507,7 +1507,7 @@ infinite_ring_offer_stays_pending(_Config) ->
     {ok, #{<<"expires_at">> := null}} = cx_router:get_offer(Agent, OfferId),
     {ok, _} = cx_router:accept_offer(Agent, OfferId),
     {ok, _} = wait_event(offer_accepted),
-    ok = cx_router:complete(Agent, IId),
+    ok = cx_router:complete(Agent, InteractionId),
     ok.
 
 admin(T) -> cx_authz:ctx(T, [<<"*">>]).
