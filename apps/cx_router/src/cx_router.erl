@@ -141,15 +141,15 @@ get_interaction(Ctx = #auth_context{tenant_id = TenantId}, InteractionId) ->
 
 %% Tenant-wide, filterable, cursor-paginated. Filters arrive as the raw
 %% query-string map; unknown keys are ignored, malformed values are 422.
-%% M1 scale note: this match-objects the tenant's interactions and
-%% filters/sorts in memory — revisit with a real index (including one on
-%% #cx_interaction.agent_id for that filter) when volume says so.
+%% An agent_id filter is served from the secondary index; the other
+%% listings still match-object the tenant and filter/sort in memory —
+%% M1 scale note: revisit that scan+sort when volume says so.
 list_interactions(Ctx = #auth_context{tenant_id = TenantId}, Filters) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:read">>),
         {ok, Limit} ?= parse_limit(Filters),
         ok ?= valid_filters(Filters),
-        Recs = cx_store:dirty_list(cx_interaction, cx_patterns:interactions(TenantId)),
+        Recs = candidate_interactions(TenantId, Filters),
         Matching = [R || R <- Recs, matches_filters(R, Filters)],
         Sorted = lists:sort(fun newest_first/2, Matching),
         Page = page_after(Sorted, maps:get(<<"after">>, Filters, undefined), TenantId, Limit),
@@ -244,6 +244,22 @@ valid_filters(Filters) ->
             _ -> ok
         end
     end.
+
+%% The candidate set the in-memory filters run over: an agent_id filter
+%% narrows it via the secondary index instead of scanning the tenant.
+%% The index is node-global, NOT tenant-scoped — the key guard on the
+%% comprehension is the tenant boundary and is load-bearing.
+candidate_interactions(TenantId, #{<<"agent_id">> := AgentId}) ->
+    [
+        Rec
+     || Rec = #cx_interaction{key = {RowTenantId, _}} <-
+            cx_store:dirty_index_read(
+                cx_interaction, AgentId, #cx_interaction.agent_id
+            ),
+        RowTenantId =:= TenantId
+    ];
+candidate_interactions(TenantId, _Filters) ->
+    cx_store:dirty_list(cx_interaction, cx_patterns:interactions(TenantId)).
 
 matches_filters(Rec, Filters) ->
     {_, QueueId} = Rec#cx_interaction.queue_key,

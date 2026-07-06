@@ -24,7 +24,8 @@ entities_test_() ->
             fun routing_profile_crud/0,
             fun not_ready_reason_crud/0,
             fun qualification_code_tree/0,
-            fun permission_denied/0
+            fun permission_denied/0,
+            fun interaction_indexes_present_and_init_idempotent/0
         ]
     end}.
 
@@ -518,3 +519,18 @@ permission_denied() ->
     ?assertEqual({error, forbidden}, cx_not_ready_reason:create(NoPerms, #{<<"name">> => <<"r">>})),
     ?assertEqual({error, forbidden}, cx_role:create(NoPerms, #{<<"name">> => <<"r">>})),
     ?assertEqual({error, forbidden}, cx_tenant:create(NoPerms, #{<<"name">> => <<"t">>})).
+
+%% Both interaction secondary indexes exist after init, and a second
+%% init over the same data dir is a no-op — pins the already_exists
+%% tolerance of both ensure_table and ensure_indexes (an index added to
+%% a spec must materialize on pre-existing tables too, or index_read
+%% would crash).
+interaction_indexes_present_and_init_idempotent() ->
+    Indexes =
+        case mnesia:table_info(cx_interaction, index) of
+            List when is_list(List) -> List
+        end,
+    ?assert(lists:member(#cx_interaction.queue_key, Indexes)),
+    ?assert(lists:member(#cx_interaction.agent_id, Indexes)),
+    ok = cx_db:init(),
+    ?assertEqual(Indexes, mnesia:table_info(cx_interaction, index)).

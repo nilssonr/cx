@@ -7,7 +7,7 @@
 %% dynamic() returns push the checking to the callers' pattern matches
 %% instead of pretending Mnesia gives us typed records.
 
--export([tx/1, read/2, dirty_read/2, list/2, dirty_list/2]).
+-export([tx/1, read/2, dirty_read/2, list/2, dirty_list/2, dirty_index_read/3]).
 
 -spec tx(fun(() -> eqwalizer:dynamic())) -> eqwalizer:dynamic().
 tx(Fun) ->
@@ -50,3 +50,12 @@ list(Tab, Pattern) ->
 -spec dirty_list(atom(), tuple()) -> [eqwalizer:dynamic()].
 dirty_list(Tab, Pattern) ->
     mnesia:dirty_match_object(Tab, Pattern).
+
+%% Dirty secondary-index lookup, same consistency stance as dirty_list.
+%% Position is a record-field index (#record.field) — not a match
+%% pattern, so the cx_patterns rule is untouched. NOTE: secondary
+%% indexes are node-global, not tenant-scoped; callers must re-check
+%% the tenant on the returned rows.
+-spec dirty_index_read(atom(), term(), pos_integer()) -> [eqwalizer:dynamic()].
+dirty_index_read(Tab, Key, Position) ->
+    mnesia:dirty_index_read(Tab, Key, Position).

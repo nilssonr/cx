@@ -38,6 +38,7 @@
     accept_holds_agent_monitor_until_down/1,
     sign_out_returns_offer_unpenalized/1,
     list_pagination_cursor_stability/1,
+    agent_id_filter_stays_tenant_scoped/1,
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
@@ -79,6 +80,7 @@ all() ->
         accept_holds_agent_monitor_until_down,
         sign_out_returns_offer_unpenalized,
         list_pagination_cursor_stability,
+        agent_id_filter_stays_tenant_scoped,
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
@@ -1631,6 +1633,63 @@ list_pagination_cursor_stability(_Config) ->
     %% unknown cursor: an empty page, never an error
     {ok, #{<<"items">> := [], <<"next">> := null}} =
         cx_router:list_interactions(Integrator, Filters#{<<"after">> => <<"ghost">>}),
+    ok.
+
+%% The agent_id filter is served from a node-global secondary index;
+%% the tenant guard on that path must hold when the same agent_id value
+%% appears in another tenant's rows (forged — user ids can't naturally
+%% collide across tenants).
+agent_id_filter_stays_tenant_scoped(_Config) ->
+    TenantA = cx_id:new(),
+    AdminA = admin(TenantA),
+    ok = cx_event:subscribe(TenantA),
+    Media = <<"open_media">>,
+    QueueA = queue(AdminA, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(AdminA, #{}, undefined),
+    AgentA = start_agent(TenantA, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    IntegratorA = integrator(TenantA),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            IntegratorA,
+            #{<<"queue_id">> => QueueA, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    ok = cx_router:complete(AgentA, I1),
+    {ok, _} = wait_data(interaction_completed),
+    ok = cx_router:stop_session(AgentA),
+    %% an unassigned interaction must not match the filter
+    {ok, #{<<"id">> := _I2}} =
+        cx_router:create_interaction(
+            IntegratorA,
+            #{<<"queue_id">> => QueueA, <<"media_type">> => Media}
+        ),
+
+    %% tenant B carries a row with the SAME agent_id
+    TenantB = cx_id:new(),
+    AdminB = admin(TenantB),
+    QueueB = queue(AdminB, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    IntegratorB = integrator(TenantB),
+    {ok, #{<<"id">> := I3}} =
+        cx_router:create_interaction(
+            IntegratorB,
+            #{<<"queue_id">> => QueueB, <<"media_type">> => Media}
+        ),
+    {ok, RecB} = cx_store:read(cx_interaction, {TenantB, I3}),
+    ok = mnesia:dirty_write(RecB#cx_interaction{agent_id = UserA}),
+
+    Filters = #{<<"agent_id">> => UserA},
+    {ok, #{<<"items">> := [#{<<"id">> := I1}]}} =
+        cx_router:list_interactions(IntegratorA, Filters),
+    {ok, #{<<"items">> := [#{<<"id">> := I3}]}} =
+        cx_router:list_interactions(IntegratorB, Filters),
     ok.
 
 %% A configured-but-missing routing profile must refuse the session —
