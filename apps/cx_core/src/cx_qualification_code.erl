@@ -51,7 +51,8 @@ update(Ctx = #auth_context{tenant_id = T}, CodeId, Params) ->
         {ok, Name} ?=
             cx_params:optional_binary(Params, <<"name">>, Rec0#cx_qualification_code.name),
         {ok, ParentId} ?= parse_parent(Params, Rec0#cx_qualification_code.parent_id),
-        {ok, Active} ?= parse_active(Params, Rec0#cx_qualification_code.active),
+        {ok, Active} ?=
+            cx_params:optional_boolean(Params, <<"active">>, Rec0#cx_qualification_code.active),
         Rec = Rec0#cx_qualification_code{
             name = Name,
             parent_id = ParentId,
@@ -117,13 +118,6 @@ parse_parent(Params, Default) ->
         #{<<"parent_id">> := null} -> {ok, undefined};
         #{<<"parent_id">> := V} when is_binary(V), V =/= <<>> -> {ok, V};
         #{<<"parent_id">> := _} -> {error, {invalid, <<"parent_id">>}};
-        _ -> {ok, Default}
-    end.
-
-parse_active(Params, Default) ->
-    case Params of
-        #{<<"active">> := B} when is_boolean(B) -> {ok, B};
-        #{<<"active">> := _} -> {error, {invalid, <<"active">>}};
         _ -> {ok, Default}
     end.
 

@@ -26,7 +26,8 @@ create(Ctx = #auth_context{tenant_id = T}, Params) ->
         {ok, WrapupMaxMs} ?= opt_infinity_ms(Params, <<"wrapup_max_ms">>, infinity),
         {ok, OfferMs} ?=
             opt_infinity_ms(Params, <<"offer_timeout_ms">>, ?DEFAULT_OFFER_TIMEOUT_MS),
-        {ok, QualRequired} ?= opt_bool(Params, <<"qualification_required">>, false),
+        {ok, QualRequired} ?=
+            cx_params:optional_boolean(Params, <<"qualification_required">>, false),
         {ok, Status} ?= cx_params:optional_atom(Params, <<"status">>, [open, closed], open),
         ok ?= validate_wrapup_policy(WrapupMs, WrapupMaxMs, QualRequired),
         Rec = #cx_queue{
@@ -79,7 +80,7 @@ update(Ctx = #auth_context{tenant_id = T}, QueueId, Params) ->
         {ok, OfferMs} ?=
             opt_infinity_ms(Params, <<"offer_timeout_ms">>, Rec0#cx_queue.offer_timeout_ms),
         {ok, QualRequired} ?=
-            opt_bool(
+            cx_params:optional_boolean(
                 Params,
                 <<"qualification_required">>,
                 Rec0#cx_queue.qualification_required
@@ -169,13 +170,6 @@ validate_wrapup_policy(WrapupMs, WrapupMaxMs, _QualRequired) when
     {error, {invalid, <<"wrapup_duration_ms">>}};
 validate_wrapup_policy(_WrapupMs, _WrapupMaxMs, _QualRequired) ->
     ok.
-
-opt_bool(Params, Key, Default) ->
-    case Params of
-        #{Key := B} when is_boolean(B) -> {ok, B};
-        #{Key := _} -> {error, {invalid, Key}};
-        _ -> {ok, Default}
-    end.
 
 %% Millisecond durations where 0 on the wire means "no limit"
 %% (offer_timeout_ms: ring forever; wrapup_max_ms: uncapped ACW). 0 is

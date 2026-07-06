@@ -31,7 +31,8 @@ update(Ctx = #auth_context{tenant_id = T}, ReasonId, Params) ->
         ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
         {ok, Rec0} ?= cx_store:read(cx_not_ready_reason, {T, ReasonId}),
         {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_not_ready_reason.name),
-        {ok, Active} ?= parse_active(Params, Rec0#cx_not_ready_reason.active),
+        {ok, Active} ?=
+            cx_params:optional_boolean(Params, <<"active">>, Rec0#cx_not_ready_reason.active),
         Rec = Rec0#cx_not_ready_reason{name = Name, active = Active},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, ReasonId, not_ready_reason_updated),
@@ -58,13 +59,6 @@ fetch(TenantId, ReasonId) ->
 
 to_map(#cx_not_ready_reason{key = {_, Id}, name = Name, active = Active}) ->
     #{<<"id">> => Id, <<"name">> => Name, <<"active">> => Active}.
-
-parse_active(Params, Default) ->
-    case Params of
-        #{<<"active">> := B} when is_boolean(B) -> {ok, B};
-        #{<<"active">> := _} -> {error, {invalid, <<"active">>}};
-        _ -> {ok, Default}
-    end.
 
 publish(TenantId, ReasonId, Type) ->
     cx_event:publish(TenantId, undefined, undefined, Type, #{<<"id">> => ReasonId}).

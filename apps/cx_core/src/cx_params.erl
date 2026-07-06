@@ -6,6 +6,7 @@
 -export([
     require_binary/2,
     optional_binary/3,
+    optional_boolean/3,
     optional_integer/3,
     optional_atom/4,
     optional_map/3,
@@ -24,6 +25,15 @@ require_binary(Params, Key) ->
 optional_binary(Params, Key, Default) ->
     case Params of
         #{Key := V} when is_binary(V) -> {ok, V};
+        #{Key := _} -> {error, {invalid, Key}};
+        _ -> {ok, Default}
+    end.
+
+-spec optional_boolean(map(), binary(), Default) ->
+    {ok, boolean() | Default} | {error, {invalid, binary()}}.
+optional_boolean(Params, Key, Default) ->
+    case Params of
+        #{Key := V} when is_boolean(V) -> {ok, V};
         #{Key := _} -> {error, {invalid, Key}};
         _ -> {ok, Default}
     end.
