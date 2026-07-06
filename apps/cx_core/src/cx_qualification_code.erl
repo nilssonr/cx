@@ -11,9 +11,9 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_context{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"qualification_codes:write">>),
+        ok ?= cx_authz:require(Context, <<"qualification_codes:write">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, ParentId} ?= parse_parent(Params, undefined),
         Rec = #cx_qualification_code{
@@ -44,9 +44,9 @@ list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_qualification_code, cx_patterns:qualification_codes(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_context{tenant_id = T}, CodeId, Params) ->
+update(Context = #auth_context{tenant_id = T}, CodeId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"qualification_codes:write">>),
+        ok ?= cx_authz:require(Context, <<"qualification_codes:write">>),
         {ok, Rec0} ?= cx_store:read(cx_qualification_code, {T, CodeId}),
         {ok, Name} ?=
             cx_params:optional_binary(Params, <<"name">>, Rec0#cx_qualification_code.name),
@@ -72,9 +72,9 @@ update(Ctx = #auth_context{tenant_id = T}, CodeId, Params) ->
         {ok, to_map(Rec)}
     end.
 
-delete(Ctx = #auth_context{tenant_id = T}, CodeId) ->
+delete(Context = #auth_context{tenant_id = T}, CodeId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"qualification_codes:write">>),
+        ok ?= cx_authz:require(Context, <<"qualification_codes:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_qualification_code, {T, CodeId}) of

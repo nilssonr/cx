@@ -6,10 +6,10 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{context := Ctx}) ->
+init(Req0, Opts = #{context := Context}) ->
     Result =
         case cowboy_req:method(Req0) of
-            <<"GET">> -> cx_presence:directory(Ctx);
+            <<"GET">> -> cx_presence:directory(Context);
             _ -> {error, method_not_allowed}
         end,
     {ok, cx_handler:reply(Result, Req0), Opts}.

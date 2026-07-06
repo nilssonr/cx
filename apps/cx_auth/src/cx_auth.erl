@@ -16,7 +16,7 @@ authenticate(<<"Bearer ", Token/binary>>) ->
     authenticate(Token);
 authenticate(Token) when is_binary(Token), Token =/= <<>> ->
     case cx_auth_jwt:verify(Token) of
-        {ok, Claims} -> cx_auth_claims:to_ctx(Claims);
+        {ok, Claims} -> cx_auth_claims:to_context(Claims);
         {error, unauthorized} -> {error, unauthorized}
     end;
 authenticate(_) ->

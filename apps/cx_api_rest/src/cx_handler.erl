@@ -71,10 +71,10 @@ with_body(Req0, Fun) ->
 %% rescoped to the path tenant so every downstream key is built from it.
 -spec scope_tenant(#auth_context{}, binary()) ->
     {ok, #auth_context{}} | {error, forbidden}.
-scope_tenant(Ctx = #auth_context{tenant_id = TenantId}, TenantId) ->
-    {ok, Ctx};
-scope_tenant(Ctx, TenantId) ->
-    case cx_authz:has(Ctx, <<"tenants:admin">>) of
-        true -> {ok, Ctx#auth_context{tenant_id = TenantId}};
+scope_tenant(Context = #auth_context{tenant_id = TenantId}, TenantId) ->
+    {ok, Context};
+scope_tenant(Context, TenantId) ->
+    case cx_authz:has(Context, <<"tenants:admin">>) of
+        true -> {ok, Context#auth_context{tenant_id = TenantId}};
         false -> {error, forbidden}
     end.

@@ -11,9 +11,9 @@
 -define(DEFAULT_WRAPUP_DURATION_MS, 30000).
 -define(DEFAULT_OFFER_TIMEOUT_MS, 6000).
 
-create(Ctx = #auth_context{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"queues:write">>),
+        ok ?= cx_authz:require(Context, <<"queues:write">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, SkillRequirements} ?=
             parse_skill_requirements(maps:get(<<"skill_requirements">>, Params, [])),
@@ -45,23 +45,23 @@ create(Ctx = #auth_context{tenant_id = T}, Params) ->
         {ok, to_map(Rec)}
     end.
 
-get(Ctx = #auth_context{tenant_id = T}, QueueId) ->
+get(Context = #auth_context{tenant_id = T}, QueueId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"queues:read">>),
+        ok ?= cx_authz:require(Context, <<"queues:read">>),
         {ok, Rec} ?= cx_store:read(cx_queue, {T, QueueId}),
         {ok, to_map(Rec)}
     end.
 
-list(Ctx = #auth_context{tenant_id = T}) ->
+list(Context = #auth_context{tenant_id = T}) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"queues:read">>),
+        ok ?= cx_authz:require(Context, <<"queues:read">>),
         Recs = cx_store:list(cx_queue, cx_patterns:queues(T)),
         {ok, [to_map(R) || R <- Recs]}
     end.
 
-update(Ctx = #auth_context{tenant_id = T}, QueueId, Params) ->
+update(Context = #auth_context{tenant_id = T}, QueueId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"queues:write">>),
+        ok ?= cx_authz:require(Context, <<"queues:write">>),
         {ok, Rec0} ?= cx_store:read(cx_queue, {T, QueueId}),
         {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_queue.name),
         {ok, SkillRequirements} ?=
@@ -107,9 +107,9 @@ update(Ctx = #auth_context{tenant_id = T}, QueueId, Params) ->
         {ok, to_map(Rec)}
     end.
 
-delete(Ctx = #auth_context{tenant_id = T}, QueueId) ->
+delete(Context = #auth_context{tenant_id = T}, QueueId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"queues:write">>),
+        ok ?= cx_authz:require(Context, <<"queues:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_queue, {T, QueueId}) of

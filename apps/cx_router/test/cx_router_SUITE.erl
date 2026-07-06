@@ -1063,12 +1063,12 @@ force_sign_out_requeues(_Config) ->
         cx_router:get_interaction(Integrator, I1),
 
     %% supervisor kick-out needs its own authority
-    NoAuthority = cx_authz:ctx(T, [<<"agent:session:self">>]),
+    NoAuthority = cx_authz:context(T, [<<"agent:session:self">>]),
     ?assertEqual(
         {error, forbidden},
         cx_router:force_stop_session(NoAuthority, UserA)
     ),
-    Supervisor = cx_authz:ctx(T, [<<"agent:session:any">>]),
+    Supervisor = cx_authz:context(T, [<<"agent:session:any">>]),
     %% idempotent: A is already gone
     ok = cx_router:force_stop_session(Supervisor, UserA),
 
@@ -1115,7 +1115,7 @@ supervisor_force_overrides_qualification(_Config) ->
         cx_router:stop_session(AgentA, true)
     ),
 
-    Supervisor = cx_authz:ctx(T, [<<"agent:session:any">>]),
+    Supervisor = cx_authz:context(T, [<<"agent:session:any">>]),
     ok = cx_router:force_stop_session(Supervisor, UserA),
     {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
     {ok, _} = wait_event(session_ended),
@@ -1703,13 +1703,13 @@ dangling_profile_fails_closed(_Config) ->
     ok = mnesia:dirty_write(Rec#cx_user{routing_profile_id = <<"ghost">>}),
     ?assertEqual(
         {error, profile_missing},
-        cx_router:start_session(agent_ctx(T, UserId))
+        cx_router:start_session(agent_context(T, UserId))
     ),
     ok.
 
 facade_permissions(_Config) ->
     T = cx_id:new(),
-    NoPerms = cx_authz:ctx(T, <<"u">>, <<"s">>, []),
+    NoPerms = cx_authz:context(T, <<"u">>, <<"s">>, []),
     ?assertEqual({error, forbidden}, cx_router:start_session(NoPerms)),
     ?assertEqual({error, forbidden}, cx_router:set_ready(NoPerms, <<"m">>, ready)),
     ?assertEqual(
@@ -1851,17 +1851,17 @@ infinite_ring_offer_stays_pending(_Config) ->
     ok = cx_router:complete(Agent, InteractionId),
     ok.
 
-admin(T) -> cx_authz:ctx(T, [<<"*">>]).
+admin(T) -> cx_authz:context(T, [<<"*">>]).
 
 integrator(T) ->
-    cx_authz:ctx(T, [
+    cx_authz:context(T, [
         <<"interactions:create">>,
         <<"interactions:cancel">>,
         <<"interactions:read">>
     ]).
 
-agent_ctx(T, UserId) ->
-    cx_authz:ctx(
+agent_context(T, UserId) ->
+    cx_authz:context(
         T,
         UserId,
         <<"sub-", UserId/binary>>,
@@ -1910,9 +1910,9 @@ user(Admin, Skills, ProfileId) ->
     Id.
 
 start_agent(T, UserId) ->
-    Ctx = agent_ctx(T, UserId),
-    {ok, _} = cx_router:start_session(Ctx),
-    Ctx.
+    Context = agent_context(T, UserId),
+    {ok, _} = cx_router:start_session(Context),
+    Context.
 
 wait_event(Type) ->
     wait_event(Type, 2000).

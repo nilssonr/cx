@@ -5,9 +5,9 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_context{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
+        ok ?= cx_authz:require(Context, <<"not_ready_reasons:write">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         Rec = #cx_not_ready_reason{key = {T, cx_id:new()}, name = Name, active = true},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
@@ -26,9 +26,9 @@ list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_not_ready_reason, cx_patterns:not_ready_reasons(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_context{tenant_id = T}, ReasonId, Params) ->
+update(Context = #auth_context{tenant_id = T}, ReasonId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
+        ok ?= cx_authz:require(Context, <<"not_ready_reasons:write">>),
         {ok, Rec0} ?= cx_store:read(cx_not_ready_reason, {T, ReasonId}),
         {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_not_ready_reason.name),
         {ok, Active} ?=
@@ -39,9 +39,9 @@ update(Ctx = #auth_context{tenant_id = T}, ReasonId, Params) ->
         {ok, to_map(Rec)}
     end.
 
-delete(Ctx = #auth_context{tenant_id = T}, ReasonId) ->
+delete(Context = #auth_context{tenant_id = T}, ReasonId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
+        ok ?= cx_authz:require(Context, <<"not_ready_reasons:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_not_ready_reason, {T, ReasonId}) of

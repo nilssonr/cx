@@ -22,10 +22,10 @@
 
 %% ---- domain surface ----
 
-set_own(Ctx = #auth_context{tenant_id = TenantId, user_id = UserId}, Params) ->
+set_own(Context = #auth_context{tenant_id = TenantId, user_id = UserId}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"presence:set:self">>),
-        ok ?= cx_authz:require_user(Ctx),
+        ok ?= cx_authz:require(Context, <<"presence:set:self">>),
+        ok ?= cx_authz:require_user(Context),
         {ok, Manual} ?= parse_state(Params),
         {ok, Message} ?= cx_params:optional_binary(Params, <<"message">>, undefined),
         {ok, Until} ?= parse_until(Params, Manual, Message),
@@ -46,12 +46,12 @@ set_own(Ctx = #auth_context{tenant_id = TenantId, user_id = UserId}, Params) ->
             end
         end),
         ok = propagate(TenantId, UserId, OldRow, Now),
-        get_own(Ctx)
+        get_own(Context)
     end.
 
-get_own(Ctx = #auth_context{tenant_id = TenantId, user_id = UserId}) ->
+get_own(Context = #auth_context{tenant_id = TenantId, user_id = UserId}) ->
     maybe
-        ok ?= cx_authz:require_user(Ctx),
+        ok ?= cx_authz:require_user(Context),
         {ok, own_map(TenantId, UserId)}
     end.
 
@@ -77,9 +77,11 @@ directory(#auth_context{tenant_id = TenantId}) ->
 %% ---- transport-internal connectivity signals ----
 
 -spec connected(#auth_context{}, pid(), map()) -> {ok, pid()} | {error, term()}.
-connected(Ctx = #auth_context{tenant_id = TenantId, user_id = UserId}, ConnectionPid, DeviceInfo) ->
+connected(
+    Context = #auth_context{tenant_id = TenantId, user_id = UserId}, ConnectionPid, DeviceInfo
+) ->
     maybe
-        ok ?= cx_authz:require_user(Ctx),
+        ok ?= cx_authz:require_user(Context),
         {ok, #cx_user{status = active}} ?= fetch_active(TenantId, UserId),
         register_connection(TenantId, UserId, ConnectionPid, DeviceInfo, ?CONNECT_RETRIES)
     else

@@ -5,9 +5,9 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_context{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"roles:write">>),
+        ok ?= cx_authz:require(Context, <<"roles:write">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, Permissions} ?= optional_permissions(Params, []),
         Rec = #cx_role{key = {T, cx_id:new()}, name = Name, permissions = Permissions},
@@ -28,9 +28,9 @@ list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_role, cx_patterns:roles(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_context{tenant_id = T}, RoleId, Params) ->
+update(Context = #auth_context{tenant_id = T}, RoleId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"roles:write">>),
+        ok ?= cx_authz:require(Context, <<"roles:write">>),
         {ok, Rec0} ?= cx_store:read(cx_role, {T, RoleId}),
         {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_role.name),
         {ok, Permissions} ?= optional_permissions(Params, Rec0#cx_role.permissions),
@@ -42,9 +42,9 @@ update(Ctx = #auth_context{tenant_id = T}, RoleId, Params) ->
 
 %% Deleting a role users reference is blocked (409) — a dangling role id
 %% would silently drop permissions at next token resolution.
-delete(Ctx = #auth_context{tenant_id = T}, RoleId) ->
+delete(Context = #auth_context{tenant_id = T}, RoleId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"roles:write">>),
+        ok ?= cx_authz:require(Context, <<"roles:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_role, {T, RoleId}) of

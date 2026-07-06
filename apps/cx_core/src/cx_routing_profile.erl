@@ -5,9 +5,9 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_context{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
+        ok ?= cx_authz:require(Context, <<"routing_profiles:write">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, MaxTotal} ?= parse_max_total(Params, unlimited),
         {ok, MediaCaps} ?= parse_media_capacities(Params, #{}),
@@ -38,9 +38,9 @@ list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_routing_profile, cx_patterns:routing_profiles(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_context{tenant_id = T}, ProfileId, Params) ->
+update(Context = #auth_context{tenant_id = T}, ProfileId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
+        ok ?= cx_authz:require(Context, <<"routing_profiles:write">>),
         {ok, Rec0} ?= cx_store:read(cx_routing_profile, {T, ProfileId}),
         {ok, Name} ?=
             cx_params:optional_binary(
@@ -69,9 +69,9 @@ update(Ctx = #auth_context{tenant_id = T}, ProfileId, Params) ->
 %% Deleting a profile users reference is blocked (409): a dangling
 %% profile reference must never happen — the session-start fallback for
 %% it fails closed, refusing the session.
-delete(Ctx = #auth_context{tenant_id = T}, ProfileId) ->
+delete(Context = #auth_context{tenant_id = T}, ProfileId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
+        ok ?= cx_authz:require(Context, <<"routing_profiles:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_routing_profile, {T, ProfileId}) of

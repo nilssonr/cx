@@ -5,9 +5,9 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, fetch_by_subject/2, to_map/1]).
 
-create(Ctx = #auth_context{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:write">>),
+        ok ?= cx_authz:require(Context, <<"users:write">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, Email} ?= cx_params:require_binary(Params, <<"email">>),
         {ok, Subject} ?= cx_params:optional_binary(Params, <<"subject">>, undefined),
@@ -32,23 +32,23 @@ create(Ctx = #auth_context{tenant_id = T}, Params) ->
         {ok, to_map(Rec)}
     end.
 
-get(Ctx = #auth_context{tenant_id = T}, UserId) ->
+get(Context = #auth_context{tenant_id = T}, UserId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:read">>),
+        ok ?= cx_authz:require(Context, <<"users:read">>),
         {ok, Rec} ?= cx_store:read(cx_user, {T, UserId}),
         {ok, to_map(Rec)}
     end.
 
-list(Ctx = #auth_context{tenant_id = T}) ->
+list(Context = #auth_context{tenant_id = T}) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:read">>),
+        ok ?= cx_authz:require(Context, <<"users:read">>),
         Recs = cx_store:list(cx_user, cx_patterns:users(T)),
         {ok, [to_map(R) || R <- Recs]}
     end.
 
-update(Ctx = #auth_context{tenant_id = T}, UserId, Params) ->
+update(Context = #auth_context{tenant_id = T}, UserId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:write">>),
+        ok ?= cx_authz:require(Context, <<"users:write">>),
         {ok, Rec0} ?= cx_store:read(cx_user, {T, UserId}),
         {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_user.name),
         {ok, Email} ?= cx_params:optional_binary(Params, <<"email">>, Rec0#cx_user.email),
@@ -83,9 +83,9 @@ update(Ctx = #auth_context{tenant_id = T}, UserId, Params) ->
         {ok, to_map(Rec)}
     end.
 
-delete(Ctx = #auth_context{tenant_id = T}, UserId) ->
+delete(Context = #auth_context{tenant_id = T}, UserId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"users:write">>),
+        ok ?= cx_authz:require(Context, <<"users:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_user, {T, UserId}) of

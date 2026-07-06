@@ -5,24 +5,24 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{context := Ctx}) ->
+init(Req0, Opts = #{context := Context}) ->
     {Result, Req1} = dispatch(
         cowboy_req:method(Req0),
         cowboy_req:binding(tenant_id, Req0),
-        Ctx,
+        Context,
         Req0
     ),
     {ok, cx_handler:reply(Result, Req1), Opts}.
 
-dispatch(<<"GET">>, undefined, Ctx, Req) ->
-    {cx_tenant:list(Ctx), Req};
-dispatch(<<"GET">>, TenantId, Ctx, Req) ->
-    {cx_tenant:get(Ctx, TenantId), Req};
-dispatch(<<"POST">>, undefined, Ctx, Req) ->
-    cx_handler:with_body(Req, fun(Params) -> cx_tenant:create(Ctx, Params) end);
-dispatch(<<"PUT">>, TenantId, Ctx, Req) when TenantId =/= undefined ->
-    cx_handler:with_body(Req, fun(Params) -> cx_tenant:update(Ctx, TenantId, Params) end);
-dispatch(<<"DELETE">>, TenantId, Ctx, Req) when TenantId =/= undefined ->
-    {cx_tenant:delete(Ctx, TenantId), Req};
+dispatch(<<"GET">>, undefined, Context, Req) ->
+    {cx_tenant:list(Context), Req};
+dispatch(<<"GET">>, TenantId, Context, Req) ->
+    {cx_tenant:get(Context, TenantId), Req};
+dispatch(<<"POST">>, undefined, Context, Req) ->
+    cx_handler:with_body(Req, fun(Params) -> cx_tenant:create(Context, Params) end);
+dispatch(<<"PUT">>, TenantId, Context, Req) when TenantId =/= undefined ->
+    cx_handler:with_body(Req, fun(Params) -> cx_tenant:update(Context, TenantId, Params) end);
+dispatch(<<"DELETE">>, TenantId, Context, Req) when TenantId =/= undefined ->
+    {cx_tenant:delete(Context, TenantId), Req};
 dispatch(_, _, _, Req) ->
     {{error, method_not_allowed}, Req}.

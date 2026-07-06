@@ -5,7 +5,7 @@
 %% string a domain operation checks via cx_authz lives here, split by
 %% who may grant it. Tenant roles (cx_role) may only carry
 %% tenant_assignable/0 entries — anything else is rejected at role
-%% write AND filtered at ctx build, so a tenant admin can never mint
+%% write AND filtered at context build, so a tenant admin can never mint
 %% platform authority for themselves.
 %%
 %% <<"*">> is NOT a permission and appears nowhere in all/0: it is the

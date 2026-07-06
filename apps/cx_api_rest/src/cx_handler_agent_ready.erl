@@ -5,7 +5,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{context := Ctx}) ->
+init(Req0, Opts = #{context := Context}) ->
     Media = cowboy_req:binding(media_type, Req0),
     {Result, Req1} =
         case cowboy_req:method(Req0) of
@@ -13,7 +13,7 @@ init(Req0, Opts = #{context := Ctx}) ->
                 cx_handler:with_body(Req0, fun(Params) ->
                     case parse_state(Params) of
                         {ok, ReadyState} ->
-                            cx_router:set_ready(Ctx, Media, ReadyState);
+                            cx_router:set_ready(Context, Media, ReadyState);
                         Error ->
                             Error
                     end

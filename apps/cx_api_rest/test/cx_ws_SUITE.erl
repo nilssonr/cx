@@ -88,7 +88,7 @@ happy_auth_ready_ping(Config) ->
 
 offer_event_targeted(Config) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     {ok, #{<<"id">> := QueueId}} =
         cx_queue:create(Admin, #{<<"name">> => <<"q">>, <<"wrapup_duration_ms">> => 0}),
     UserA = create_user(Admin, <<"A">>),
@@ -98,11 +98,11 @@ offer_event_targeted(Config) ->
     {ConnB, StreamB} = ws_auth(Config, T, UserB),
 
     %% only A signs in as an agent and goes ready
-    AgentA = agent_ctx(T, UserA),
+    AgentA = agent_context(T, UserA),
     {ok, _} = cx_router:start_session(AgentA),
     ok = cx_router:set_ready(AgentA, <<"open_media">>, ready),
 
-    Integrator = cx_authz:ctx(T, [<<"interactions:create">>]),
+    Integrator = cx_authz:context(T, [<<"interactions:create">>]),
     {ok, #{<<"id">> := InteractionId}} =
         cx_router:create_interaction(Integrator, #{
             <<"queue_id">> => QueueId, <<"media_type">> => <<"open_media">>
@@ -127,7 +127,7 @@ offer_event_targeted(Config) ->
 
 presence_fanout_and_disconnect(Config) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     UserA = create_user(Admin, <<"A">>),
     UserB = create_user(Admin, <<"B">>),
 
@@ -179,7 +179,7 @@ disabled_user_closes_socket(Config) ->
     ok = application:set_env(cx_api_rest, ws_session_check_ms, 200),
     try
         T = cx_id:new(),
-        Admin = cx_authz:ctx(T, [<<"*">>]),
+        Admin = cx_authz:context(T, [<<"*">>]),
         UserId = create_user(Admin, <<"Doomed">>),
         {Conn, Stream} = ws_auth(Config, T, UserId),
         {ok, _} = cx_user:update(Admin, UserId, #{<<"status">> => <<"disabled">>}),
@@ -199,7 +199,7 @@ deactivated_user_presence_close(Config) ->
     ok = application:set_env(cx_api_rest, ws_presence_retry_ms, 50),
     try
         T = cx_id:new(),
-        Admin = cx_authz:ctx(T, [<<"*">>]),
+        Admin = cx_authz:context(T, [<<"*">>]),
         UserId = create_user(Admin, <<"Gone">>),
         {Conn, Stream} = ws_auth(Config, T, UserId),
         %% registration done: own online event proves the session exists
@@ -223,7 +223,7 @@ deactivated_user_presence_close(Config) ->
 
 provision_user(Name) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     {T, create_user(Admin, Name)}.
 
 create_user(Admin, Name) ->
@@ -247,8 +247,8 @@ create_user(Admin, Name) ->
         }),
     Id.
 
-agent_ctx(T, UserId) ->
-    cx_authz:ctx(T, UserId, <<"s">>, [
+agent_context(T, UserId) ->
+    cx_authz:context(T, UserId, <<"s">>, [
         <<"agent:session:self">>, <<"agent:ready:self">>, <<"agent:offers:self">>
     ]).
 

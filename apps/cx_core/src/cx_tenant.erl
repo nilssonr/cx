@@ -7,9 +7,9 @@
 
 %% The id may be supplied explicitly (e.g. the IdP organization id, so
 %% token tenant claims map 1:1 onto cx tenants); otherwise generated.
-create(Ctx, Params) ->
+create(Context, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
+        ok ?= cx_authz:require(Context, <<"tenants:admin">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, Id} ?= cx_params:optional_binary(Params, <<"id">>, cx_id:new()),
         Now = cx_time:now_ms(),
@@ -34,22 +34,22 @@ create(Ctx, Params) ->
 %% Anyone may read their own tenant; reading others needs tenants:admin.
 get(#auth_context{tenant_id = TenantId}, TenantId) ->
     fetch_map(TenantId);
-get(Ctx, TenantId) ->
+get(Context, TenantId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
+        ok ?= cx_authz:require(Context, <<"tenants:admin">>),
         fetch_map(TenantId)
     end.
 
-list(Ctx) ->
+list(Context) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
+        ok ?= cx_authz:require(Context, <<"tenants:admin">>),
         Recs = cx_store:list(cx_tenant, cx_patterns:tenants()),
         {ok, [to_map(R) || R <- Recs]}
     end.
 
-update(Ctx, TenantId, Params) ->
+update(Context, TenantId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
+        ok ?= cx_authz:require(Context, <<"tenants:admin">>),
         {ok, Rec0} ?= cx_store:read(cx_tenant, TenantId),
         {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_tenant.name),
         {ok, Status} ?=
@@ -71,9 +71,9 @@ update(Ctx, TenantId, Params) ->
 
 %% No cascade in M1: deleting a tenant leaves its scoped rows orphaned
 %% (unreachable, since every read path requires the tenant in the key).
-delete(Ctx, TenantId) ->
+delete(Context, TenantId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
+        ok ?= cx_authz:require(Context, <<"tenants:admin">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_tenant, TenantId) of

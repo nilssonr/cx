@@ -18,8 +18,8 @@ execute(Req, Env = #{handler := cx_handler_socket}) ->
 execute(Req, Env = #{handler_opts := Opts}) ->
     Authorization = cowboy_req:header(<<"authorization">>, Req, <<>>),
     case cx_auth:authenticate(Authorization) of
-        {ok, Ctx} ->
-            {ok, Req, Env#{handler_opts => Opts#{context => Ctx}}};
+        {ok, Context} ->
+            {ok, Req, Env#{handler_opts => Opts#{context => Context}}};
         {error, unauthorized} ->
             Req1 = cowboy_req:reply(
                 401,

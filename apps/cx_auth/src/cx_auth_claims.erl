@@ -10,10 +10,10 @@
 
 -include_lib("cx_core/include/cx_core.hrl").
 
--export([to_ctx/1]).
+-export([to_context/1]).
 
--spec to_ctx(map()) -> {ok, #auth_context{}} | {error, unauthorized}.
-to_ctx(Claims) ->
+-spec to_context(map()) -> {ok, #auth_context{}} | {error, unauthorized}.
+to_context(Claims) ->
     TenantClaim = application:get_env(
         cx_auth,
         tenant_claim,

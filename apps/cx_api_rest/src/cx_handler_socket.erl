@@ -14,7 +14,7 @@
 %%
 %% First-frame auth is not forever: a session_check timer closes the
 %% socket when the token's exp passes and periodically re-resolves the
-%% claims (cx_auth_claims:to_ctx), so disabling a user or changing
+%% claims (cx_auth_claims:to_context), so disabling a user or changing
 %% their roles takes effect on live sockets, not just new connections.
 
 -behaviour(cowboy_websocket).
@@ -105,7 +105,7 @@ websocket_info({timeout, _TRef, presence_retry}, State = #socket{phase = ready})
 websocket_info(
     {timeout, TimerRef, session_check},
     State = #socket{
-        phase = ready, session_timer_ref = TimerRef, expiry_ms = ExpiryMs, auth_context = Ctx
+        phase = ready, session_timer_ref = TimerRef, expiry_ms = ExpiryMs, auth_context = Context
     }
 ) ->
     %% no extra leeway: verify-time leeway already covered issuer clock
@@ -116,10 +116,10 @@ websocket_info(
         false ->
             %% re-resolve the claims: user disabled/deleted closes the
             %% socket; role/permission changes refresh the live auth_context
-            case cx_auth_claims:to_ctx(Ctx#auth_context.claims) of
-                {ok, Ctx1} ->
+            case cx_auth_claims:to_context(Context#auth_context.claims) of
+                {ok, Context1} ->
                     State1 = State#socket{
-                        auth_context = Ctx1,
+                        auth_context = Context1,
                         session_timer_ref = schedule_session_check(ExpiryMs)
                     },
                     {[], State1};
@@ -154,12 +154,12 @@ websocket_info({'DOWN', Ref, process, _Pid, _Reason}, State = #socket{presence =
 websocket_info(_Info, State) ->
     {[], State}.
 
-terminate(_Reason, _PartialReq, #socket{phase = ready, auth_context = Ctx}) ->
+terminate(_Reason, _PartialReq, #socket{phase = ready, auth_context = Context}) ->
     %% fast path only — the presence session's monitor on this process
     %% is the authoritative disconnect signal (terminate isn't
     %% guaranteed on brutal kills)
     try
-        cx_presence:disconnected(Ctx, self())
+        cx_presence:disconnected(Context, self())
     catch
         _:_ -> ok
     end,
@@ -177,7 +177,7 @@ authenticate(Token, DeviceId, State) ->
             %% valid token without an agent identity (integrator
             %% credentials) — nothing to deliver, nothing to register
             {[{close, 4403, <<"no_agent_identity">>}], State};
-        {ok, Ctx = #auth_context{tenant_id = T, user_id = UserId, claims = Claims}} ->
+        {ok, Context = #auth_context{tenant_id = T, user_id = UserId, claims = Claims}} ->
             cancel_auth_timer(State#socket.auth_timer_ref),
             %% exp is required by cx_auth_jwt:validate_claims; if it is
             %% somehow absent, fail closed as already-expired
@@ -191,7 +191,7 @@ authenticate(Token, DeviceId, State) ->
             ok = cx_event:subscribe(T),
             {Commands, State1} = register_presence(State#socket{
                 phase = ready,
-                auth_context = Ctx,
+                auth_context = Context,
                 auth_timer_ref = undefined,
                 device_id = DeviceId,
                 last_activity = cx_time:now_ms(),
@@ -216,13 +216,13 @@ schedule_session_check(ExpiryMs) ->
     Delay = max(0, min(Interval, ExpiryMs - cx_time:now_ms())),
     erlang:start_timer(Delay, self(), session_check).
 
-register_presence(State = #socket{auth_context = Ctx, presence_retries = N}) ->
+register_presence(State = #socket{auth_context = Context, presence_retries = N}) ->
     DeviceInfo = #{
         device_id => State#socket.device_id,
         user_agent => State#socket.user_agent,
         ip => State#socket.peer
     },
-    case cx_presence:connected(Ctx, self(), DeviceInfo) of
+    case cx_presence:connected(Context, self(), DeviceInfo) of
         {ok, SessionPid} ->
             State1 = State#socket{
                 presence = {SessionPid, erlang:monitor(process, SessionPid)},

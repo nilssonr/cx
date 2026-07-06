@@ -12,14 +12,14 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{context := Ctx, operation := Op}) ->
+init(Req0, Opts = #{context := Context, operation := Operation}) ->
     OfferId = cowboy_req:binding(offer_id, Req0),
     Result =
-        case {cowboy_req:method(Req0), Op} of
-            {<<"GET">>, list} -> cx_router:list_offers(Ctx);
-            {<<"GET">>, get} -> cx_router:get_offer(Ctx, OfferId);
-            {<<"POST">>, accepted} -> cx_router:accept_offer(Ctx, OfferId);
-            {<<"POST">>, rejected} -> cx_router:reject_offer(Ctx, OfferId);
+        case {cowboy_req:method(Req0), Operation} of
+            {<<"GET">>, list} -> cx_router:list_offers(Context);
+            {<<"GET">>, get} -> cx_router:get_offer(Context, OfferId);
+            {<<"POST">>, accepted} -> cx_router:accept_offer(Context, OfferId);
+            {<<"POST">>, rejected} -> cx_router:reject_offer(Context, OfferId);
             _ -> {error, method_not_allowed}
         end,
     {ok, cx_handler:reply(Result, Req0), Opts}.

@@ -53,14 +53,14 @@ platform_admin_token(Keypair) ->
         <<"sub">> => <<"boss">>,
         ?TENANT_CLAIM => <<"t1">>
     }),
-    {ok, Ctx} = cx_auth:authenticate(<<"Bearer ", Token/binary>>),
-    ?assertEqual(<<"t1">>, Ctx#auth_context.tenant_id),
-    ?assertEqual(undefined, Ctx#auth_context.user_id),
-    ?assert(cx_authz:has(Ctx, <<"anything:at:all">>)).
+    {ok, Context} = cx_auth:authenticate(<<"Bearer ", Token/binary>>),
+    ?assertEqual(<<"t1">>, Context#auth_context.tenant_id),
+    ?assertEqual(undefined, Context#auth_context.user_id),
+    ?assert(cx_authz:has(Context, <<"anything:at:all">>)).
 
 user_token_role_permissions(Keypair) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     {ok, #{<<"id">> := RoleId}} =
         cx_role:create(Admin, #{
             <<"name">> => <<"Agent">>,
@@ -77,18 +77,18 @@ user_token_role_permissions(Keypair) ->
         <<"sub">> => <<"agent-sub">>,
         ?TENANT_CLAIM => T
     }),
-    {ok, Ctx} = cx_auth:authenticate(Token),
-    ?assertEqual(UserId, Ctx#auth_context.user_id),
-    ?assert(cx_authz:has(Ctx, <<"agent:ready:self">>)),
-    ?assertNot(cx_authz:has(Ctx, <<"queues:write">>)).
+    {ok, Context} = cx_auth:authenticate(Token),
+    ?assertEqual(UserId, Context#auth_context.user_id),
+    ?assert(cx_authz:has(Context, <<"agent:ready:self">>)),
+    ?assertNot(cx_authz:has(Context, <<"queues:write">>)).
 
 %% A role row carrying out-of-catalog permissions (predating the
 %% cx_role allow-list, or written around it) must be neutralized when
-%% the ctx is built — the wildcard and platform perms never reach a
+%% the context is built — the wildcard and platform perms never reach a
 %% tenant token.
 poisoned_role_row_filtered(Keypair) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     RoleId = cx_id:new(),
     ok = cx_store:tx(fun() ->
         mnesia:write(#cx_role{
@@ -108,10 +108,10 @@ poisoned_role_row_filtered(Keypair) ->
         <<"sub">> => <<"evil-sub">>,
         ?TENANT_CLAIM => T
     }),
-    {ok, Ctx} = cx_auth:authenticate(Token),
-    ?assert(cx_authz:has(Ctx, <<"queues:read">>)),
-    ?assertNot(cx_authz:has(Ctx, <<"tenants:admin">>)),
-    ?assertNot(cx_authz:has(Ctx, <<"queues:write">>)).
+    {ok, Context} = cx_auth:authenticate(Token),
+    ?assert(cx_authz:has(Context, <<"queues:read">>)),
+    ?assertNot(cx_authz:has(Context, <<"tenants:admin">>)),
+    ?assertNot(cx_authz:has(Context, <<"queues:write">>)).
 
 expired_token(Keypair) ->
     Now = erlang:system_time(second),
@@ -153,7 +153,7 @@ unknown_subject(Keypair) ->
 
 disabled_user(Keypair) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     {ok, #{<<"id">> := UserId}} =
         cx_user:create(Admin, #{
             <<"name">> => <<"D">>,
@@ -253,7 +253,7 @@ rotation_overlap_duplicate_kid_verifies(Keypair) ->
 
 crud_forbidden_without_permission(Keypair) ->
     T = cx_id:new(),
-    Admin = cx_authz:ctx(T, [<<"*">>]),
+    Admin = cx_authz:context(T, [<<"*">>]),
     {ok, #{<<"id">> := _}} =
         cx_user:create(Admin, #{
             <<"name">> => <<"P">>,
@@ -264,9 +264,9 @@ crud_forbidden_without_permission(Keypair) ->
         <<"sub">> => <<"powerless">>,
         ?TENANT_CLAIM => T
     }),
-    {ok, Ctx} = cx_auth:authenticate(Token),
+    {ok, Context} = cx_auth:authenticate(Token),
     ?assertEqual(
         {error, forbidden},
-        cx_queue:create(Ctx, #{<<"name">> => <<"q">>})
+        cx_queue:create(Context, #{<<"name">> => <<"q">>})
     ),
-    ?assertEqual({error, forbidden}, cx_user:list(Ctx)).
+    ?assertEqual({error, forbidden}, cx_user:list(Context)).

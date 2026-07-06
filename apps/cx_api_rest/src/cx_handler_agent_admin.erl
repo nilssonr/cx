@@ -9,7 +9,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{context := Ctx0}) ->
+init(Req0, Opts = #{context := Context0}) ->
     Result =
         case
             {
@@ -19,8 +19,8 @@ init(Req0, Opts = #{context := Ctx0}) ->
             }
         of
             {<<"DELETE">>, TenantId, UserId} when is_binary(TenantId), is_binary(UserId) ->
-                case cx_handler:scope_tenant(Ctx0, TenantId) of
-                    {ok, Ctx} -> cx_router:force_stop_session(Ctx, UserId);
+                case cx_handler:scope_tenant(Context0, TenantId) of
+                    {ok, Context} -> cx_router:force_stop_session(Context, UserId);
                     Error -> Error
                 end;
             {<<"DELETE">>, _, _} ->

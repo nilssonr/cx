@@ -11,27 +11,27 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{context := Ctx}) ->
-    Op = maps:get(operation, Opts, undefined),
+init(Req0, Opts = #{context := Context}) ->
+    Operation = maps:get(operation, Opts, undefined),
     {Result, Req1} = dispatch(
         cowboy_req:method(Req0),
-        Op,
+        Operation,
         cowboy_req:binding(id, Req0),
-        Ctx,
+        Context,
         Req0
     ),
     {ok, cx_handler:reply(Result, Req1), Opts}.
 
-dispatch(<<"POST">>, undefined, undefined, Ctx, Req) ->
+dispatch(<<"POST">>, undefined, undefined, Context, Req) ->
     cx_handler:with_body(Req, fun(Params) ->
-        cx_router:create_interaction(Ctx, Params)
+        cx_router:create_interaction(Context, Params)
     end);
-dispatch(<<"GET">>, undefined, undefined, Ctx, Req) ->
+dispatch(<<"GET">>, undefined, undefined, Context, Req) ->
     Filters = maps:from_list(cowboy_req:parse_qs(Req)),
-    {cx_router:list_interactions(Ctx, Filters), Req};
-dispatch(<<"GET">>, undefined, Id, Ctx, Req) when is_binary(Id) ->
-    {cx_router:get_interaction(Ctx, Id), Req};
-dispatch(<<"POST">>, cancel, Id, Ctx, Req) when is_binary(Id) ->
-    {cx_router:cancel_interaction(Ctx, Id), Req};
+    {cx_router:list_interactions(Context, Filters), Req};
+dispatch(<<"GET">>, undefined, Id, Context, Req) when is_binary(Id) ->
+    {cx_router:get_interaction(Context, Id), Req};
+dispatch(<<"POST">>, cancel, Id, Context, Req) when is_binary(Id) ->
+    {cx_router:cancel_interaction(Context, Id), Req};
 dispatch(_, _, _, _, Req) ->
     {{error, method_not_allowed}, Req}.

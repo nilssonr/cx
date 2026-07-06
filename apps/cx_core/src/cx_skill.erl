@@ -5,9 +5,9 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_context{tenant_id = T}, Params) ->
+create(Context = #auth_context{tenant_id = T}, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"skills:write">>),
+        ok ?= cx_authz:require(Context, <<"skills:write">>),
         {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, Levels} ?= parse_levels(maps:get(<<"levels">>, Params, [])),
         Rec = #cx_skill{key = {T, cx_id:new()}, name = Name, levels = Levels},
@@ -26,9 +26,9 @@ list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_skill, cx_patterns:skills(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_context{tenant_id = T}, SkillId, Params) ->
+update(Context = #auth_context{tenant_id = T}, SkillId, Params) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"skills:write">>),
+        ok ?= cx_authz:require(Context, <<"skills:write">>),
         {ok, Rec0} ?= cx_store:read(cx_skill, {T, SkillId}),
         {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_skill.name),
         {ok, Levels} ?=
@@ -45,9 +45,9 @@ update(Ctx = #auth_context{tenant_id = T}, SkillId, Params) ->
 %% Deleting a skill that users hold or queues require is blocked (409):
 %% cascading would silently rewrite routing behavior; the admin resolves
 %% the references deliberately. Checked inside the delete transaction.
-delete(Ctx = #auth_context{tenant_id = T}, SkillId) ->
+delete(Context = #auth_context{tenant_id = T}, SkillId) ->
     maybe
-        ok ?= cx_authz:require(Ctx, <<"skills:write">>),
+        ok ?= cx_authz:require(Context, <<"skills:write">>),
         ok ?=
             cx_store:tx(fun() ->
                 case mnesia:read(cx_skill, {T, SkillId}) of
