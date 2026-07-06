@@ -67,7 +67,10 @@
     %% [{OfferId, InteractionId}] most-recent-first, capped — serves
     %% retried accepts after the offer left `pending` (idempotency)
     recent_accepts = [] :: [{binary(), binary()}],
-    idle_since :: integer()
+    idle_since :: integer(),
+    %% teardown in progress: snapshot writes are pointless — terminate/3
+    %% deletes the row moments later
+    shutting_down = false :: boolean()
 }).
 
 -define(RECENT_ACCEPTS_MAX, 50).
@@ -436,7 +439,7 @@ handle_event({call, From}, stop_session, _State, Data) ->
                         {error, conflict} -> remove_work(InteractionId, Acc)
                     end
                 end,
-                Data,
+                Data#agent_session{shutting_down = true},
                 Data#agent_session.work
             ),
             shutdown(From, Data1)
@@ -528,6 +531,8 @@ remove_work(InteractionId, Data) ->
     write_snapshot(Data1),
     Data1.
 
+write_snapshot(#agent_session{shutting_down = true}) ->
+    ok;
 write_snapshot(Data = #agent_session{tenant = Tenant, agent_id = AgentId}) ->
     Rec = #cx_agent_snapshot{
         key = {Tenant, AgentId},
@@ -538,7 +543,13 @@ write_snapshot(Data = #agent_session{tenant = Tenant, agent_id = AgentId}) ->
         profile = Data#agent_session.profile,
         idle_since = Data#agent_session.idle_since
     },
-    ok = mnesia:dirty_write(Rec).
+    %% Skip byte-identical rewrites: hold/resume/extend/qualify change
+    %% neither the mix nor anything else the snapshot carries, and the
+    %% ram_copies lookup is cheaper than the write it elides.
+    case mnesia:dirty_read(cx_agent_snapshot, {Tenant, AgentId}) of
+        [Rec] -> ok;
+        _ -> ok = mnesia:dirty_write(Rec)
+    end.
 
 %% Forced teardown (mode already checked by the caller): engaged work
 %% goes back to its queue at original position, wrap-ups finalize,
@@ -578,7 +589,7 @@ force_shutdown(From, Data) ->
                     remove_work(InteractionId, Acc)
             end
         end,
-        Data,
+        Data#agent_session{shutting_down = true},
         Data#agent_session.work
     ),
     shutdown(From, Data1).
