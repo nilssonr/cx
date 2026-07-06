@@ -717,7 +717,7 @@ maybe_release_overdue(
         false ->
             {keep_state, Data, [{reply, From, ok}]}
     end;
-maybe_release_overdue(Data, _IId, _W, From) ->
+maybe_release_overdue(Data, _InteractionId, _W, From) ->
     {keep_state, Data, [{reply, From, ok}]}.
 
 %% Pure check on the cap snapshotted at ACW entry — no queue fetch per

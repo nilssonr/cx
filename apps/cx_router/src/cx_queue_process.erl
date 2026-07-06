@@ -388,7 +388,7 @@ handle_event(info, {'DOWN', MonitorRef, process, _Pid, _Reason}, _S, Data) ->
         [] ->
             keep_state_and_data
     end;
-handle_event({timeout, {widen, _IId, _AfterMs}}, _Content, _S, _Data) ->
+handle_event({timeout, {widen, _InteractionId, _AfterMs}}, _Content, _S, _Data) ->
     %% pure wake-up; requirements are recomputed from wait time
     {keep_state_and_data, [{next_event, internal, route}]};
 handle_event(info, cx_agent_available, _S, _Data) ->

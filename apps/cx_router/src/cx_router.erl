@@ -171,8 +171,8 @@ agent_interaction(Ctx = #auth_context{tenant_id = TenantId}, InteractionId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Pid} ?= session_of(Ctx),
-        {ok, IIds} ?= call(Pid, list_work),
-        true ?= lists:member(InteractionId, IIds) orelse {error, not_found},
+        {ok, InteractionIds} ?= call(Pid, list_work),
+        true ?= lists:member(InteractionId, InteractionIds) orelse {error, not_found},
         {ok, Rec} ?= cx_store:read(cx_interaction, {TenantId, InteractionId}),
         {ok, interaction_to_map(Rec)}
     end.
@@ -185,10 +185,10 @@ agent_interactions(Ctx = #auth_context{tenant_id = TenantId}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Pid} ?= session_of(Ctx),
-        {ok, IIds} ?= call(Pid, list_work),
+        {ok, InteractionIds} ?= call(Pid, list_work),
         Recs = [
             Rec
-         || InteractionId <- IIds,
+         || InteractionId <- InteractionIds,
             Rec <- [
                 case cx_store:dirty_read(cx_interaction, {TenantId, InteractionId}) of
                     {ok, R} -> R;
@@ -333,26 +333,26 @@ reject_offer(Ctx, OfferId) ->
 %% path; the WS events remain the push path. Resolved offers are gone
 %% (404), by design: an offer is an attempt, not a durable resource.
 list_offers(Ctx) ->
-    interaction_op(Ctx, <<"agent:offers:self">>, list_offers).
+    session_call(Ctx, <<"agent:offers:self">>, list_offers).
 
 get_offer(Ctx, OfferId) ->
-    interaction_op(Ctx, <<"agent:offers:self">>, {get_offer, OfferId}).
+    session_call(Ctx, <<"agent:offers:self">>, {get_offer, OfferId}).
 
 %% ---- owned-interaction operations ----
 
 %% Retried complete: the session no longer knows the interaction, but if
 %% the row says this agent already completed it, the desired state holds.
 complete(Ctx, InteractionId) ->
-    case interaction_op(Ctx, <<"agent:interactions:self">>, {complete, InteractionId}) of
+    case session_call(Ctx, <<"agent:interactions:self">>, {complete, InteractionId}) of
         {error, not_found} -> completed_by_me(Ctx, InteractionId);
         Result -> Result
     end.
 
 hold(Ctx, InteractionId) ->
-    interaction_op(Ctx, <<"agent:interactions:self">>, {hold, InteractionId}).
+    session_call(Ctx, <<"agent:interactions:self">>, {hold, InteractionId}).
 
 resume(Ctx, InteractionId) ->
-    interaction_op(Ctx, <<"agent:interactions:self">>, {resume, InteractionId}).
+    session_call(Ctx, <<"agent:interactions:self">>, {resume, InteractionId}).
 
 %% PUT-semantics: the given list REPLACES the interaction's codes ([]
 %% clears them). Any active node of the tenant's tree is selectable.
@@ -388,19 +388,19 @@ validate_qualifications(TenantId, [Id | Rest]) ->
 %% ---- after-call work (per interaction) ----
 
 extend_wrapup(Ctx, InteractionId, ExtraMs) when is_integer(ExtraMs), ExtraMs > 0 ->
-    interaction_op(Ctx, <<"agent:wrapup:self">>, {extend_wrapup, InteractionId, ExtraMs});
-extend_wrapup(_Ctx, _IId, _) ->
+    session_call(Ctx, <<"agent:wrapup:self">>, {extend_wrapup, InteractionId, ExtraMs});
+extend_wrapup(_Ctx, _InteractionId, _) ->
     {error, {invalid, <<"extend_ms">>}}.
 
 finalize_wrapup(Ctx, InteractionId) ->
-    case interaction_op(Ctx, <<"agent:wrapup:self">>, {finalize_wrapup, InteractionId}) of
+    case session_call(Ctx, <<"agent:wrapup:self">>, {finalize_wrapup, InteractionId}) of
         {error, not_found} -> completed_by_me(Ctx, InteractionId);
         Result -> Result
     end.
 
-interaction_op(Ctx, Perm, Msg) ->
+session_call(Ctx, Permission, Msg) ->
     maybe
-        ok ?= cx_authz:require(Ctx, Perm),
+        ok ?= cx_authz:require(Ctx, Permission),
         {ok, Pid} ?= session_of(Ctx),
         call(Pid, Msg)
     end.
