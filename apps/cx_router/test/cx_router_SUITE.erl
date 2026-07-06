@@ -28,6 +28,8 @@
     accept_retry_idempotent/1,
     force_sign_out_requeues/1,
     supervisor_force_overrides_qualification/1,
+    force_sign_out_flips_row_without_queue/1,
+    requeue_clears_prior_engagement_fields/1,
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
@@ -59,6 +61,8 @@ all() ->
         accept_retry_idempotent,
         force_sign_out_requeues,
         supervisor_force_overrides_qualification,
+        force_sign_out_flips_row_without_queue,
+        requeue_clears_prior_engagement_fields,
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
@@ -1097,6 +1101,105 @@ supervisor_force_overrides_qualification(_Config) ->
     ok = cx_router:force_stop_session(Supervisor, UserA),
     {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
     {ok, _} = wait_event(session_ended),
+    ok.
+
+%% The force teardown flips the row BEFORE talking to the queue: even
+%% with the queue process gone and its config deleted, the interaction
+%% ends queued and scrubbed — never stranded active under a signed-out
+%% agent. recover/1 adopts it whenever the queue next starts.
+force_sign_out_flips_row_without_queue(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+
+    QueuePid =
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            P when is_pid(P) -> P
+        end,
+    ok = supervisor:terminate_child(cx_queue_sup, QueuePid),
+    ok = cx_queue:delete(Admin, QueueId),
+
+    ok = cx_router:stop_session(AgentA, true),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_requeued),
+    {ok, _} = wait_event(session_ended),
+    {ok, #{
+        <<"state">> := <<"queued">>,
+        <<"agent_id">> := null,
+        <<"qualification_ids">> := []
+    }} = cx_router:get_interaction(Integrator, I1),
+    ok.
+
+%% Codes entered by an agent who is then force-signed-out must not
+%% follow the interaction to its next agent: every engaged → queued
+%% writer scrubs the prior engagement.
+requeue_clears_prior_engagement_fields(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    {ok, #{<<"id">> := Code}} =
+        cx_qualification_code:create(Admin, #{<<"name">> => <<"Topic">>}),
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+
+    %% agent A tags codes while active, then is forced out
+    ok = cx_router:qualify(AgentA, I1, #{<<"qualification_ids">> => [Code]}),
+    {ok, _} = wait_data(interaction_qualified),
+    {ok, #{<<"qualification_ids">> := [Code]}} =
+        cx_router:get_interaction(Integrator, I1),
+    ok = cx_router:stop_session(AgentA, true),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_requeued),
+    {ok, _} = wait_event(session_ended),
+    {ok, #{
+        <<"state">> := <<"queued">>,
+        <<"agent_id">> := null,
+        <<"qualification_ids">> := []
+    }} = cx_router:get_interaction(Integrator, I1),
+
+    %% agent B accepts a clean interaction and completes it as their own
+    UserB = user(Admin, #{}, undefined),
+    AgentB = start_agent(T, UserB),
+    ok = cx_router:set_ready(AgentB, Media, ready),
+    {ok, #{<<"offer_id">> := O2, <<"interaction_id">> := I1}} =
+        wait_data(offer_created, 2000),
+    {ok, _} = cx_router:accept_offer(AgentB, O2),
+    ok = cx_router:complete(AgentB, I1),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
+    {ok, #{
+        <<"state">> := <<"completed">>,
+        <<"agent_id">> := UserB,
+        <<"qualification_ids">> := []
+    }} = cx_router:get_interaction(Integrator, I1),
+    ok = cx_router:stop_session(AgentB),
     ok.
 
 %% A configured-but-missing routing profile must refuse the session —

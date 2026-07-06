@@ -557,7 +557,10 @@ write_snapshot(Data = #agent_session{tenant = Tenant, agent_id = AgentId}) ->
 
 %% Forced teardown (mode already checked by the caller): engaged work
 %% goes back to its queue at original position, wrap-ups finalize,
-%% pending offers are handed back, the session stops.
+%% pending offers are handed back, the session stops. The Mnesia row is
+%% flipped to queued BEFORE the queue is told — if the queue is down or
+%% the cast never lands, recover/1 adopts the queued row at next start
+%% instead of the row stranding as active under a signed-out agent.
 force_shutdown(From, Data) ->
     Data1 = maps:fold(
         fun(InteractionId, W = #work{phase = Phase}, Acc) ->
@@ -568,11 +571,23 @@ force_shutdown(From, Data) ->
                         {error, conflict} -> remove_work(InteractionId, Acc)
                     end;
                 _ ->
-                    {_, QueueId} = W#work.queue_key,
-                    case cx_queue_process:ensure_started(Acc#agent_session.tenant, QueueId) of
-                        {ok, QueuePid} ->
-                            gen_statem:cast(QueuePid, {requeue_active, InteractionId});
-                        {error, _} ->
+                    case requeue_row(Acc, InteractionId) of
+                        ok ->
+                            publish_i(Acc, W, InteractionId, interaction_requeued, #{}),
+                            {_, QueueId} = W#work.queue_key,
+                            case
+                                cx_queue_process:ensure_started(
+                                    Acc#agent_session.tenant, QueueId
+                                )
+                            of
+                                {ok, QueuePid} ->
+                                    gen_statem:cast(QueuePid, {adopt_queued, InteractionId});
+                                {error, _} ->
+                                    ok
+                            end;
+                        {error, conflict} ->
+                            %% a racing writer owns the row — not ours
+                            %% to narrate or hand back
                             ok
                     end,
                     remove_work(InteractionId, Acc)
@@ -639,6 +654,30 @@ set_state(
                     completed_at = maps:get(
                         completed_at, Extra, Rec#cx_interaction.completed_at
                     )
+                });
+            _ ->
+                {error, conflict}
+        end
+    end).
+
+%% Return an engaged row to its queue's backlog: the inverse of accept,
+%% guarded like set_state (a racing writer owns the row and nothing is
+%% written). Every trace of the dead engagement is cleared — stale
+%% qualification codes or wrap-up timestamps must not survive to be
+%% attributed to whichever agent accepts the interaction next.
+requeue_row(#agent_session{tenant = Tenant}, InteractionId) ->
+    cx_store:tx(fun() ->
+        case mnesia:read(cx_interaction, {Tenant, InteractionId}) of
+            [Rec = #cx_interaction{state = State}] when
+                State =:= active; State =:= held
+            ->
+                mnesia:write(Rec#cx_interaction{
+                    state = queued,
+                    agent_id = undefined,
+                    accepted_at = undefined,
+                    qualification_ids = [],
+                    wrapup_started_at = undefined,
+                    wrapup_until = undefined
                 });
             _ ->
                 {error, conflict}

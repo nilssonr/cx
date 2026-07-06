@@ -191,10 +191,17 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
             InteractionId = Item#waiting_item.interaction_id,
             ok = cx_store:tx(fun() ->
                 [Rec] = mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}),
+                %% engagement starts from a clean slate: every writer
+                %% returning a row to queued clears these already, but
+                %% accept re-clearing makes active-entry state
+                %% self-evident regardless of which path queued the row
                 mnesia:write(Rec#cx_interaction{
                     state = active,
                     agent_id = Offer#placed_offer.agent_id,
-                    accepted_at = cx_time:now_ms()
+                    accepted_at = cx_time:now_ms(),
+                    qualification_ids = [],
+                    wrapup_started_at = undefined,
+                    wrapup_until = undefined
                 })
             end),
             gen_statem:cast(Offer#placed_offer.agent_pid, {offer_accepted, OfferId}),
@@ -232,48 +239,39 @@ handle_event({call, From}, {rejected, OfferId}, _S, Data) ->
         error ->
             {keep_state_and_data, [{reply, From, {error, expired}}]}
     end;
-%% force sign-out hands an ENGAGED (active/held) interaction back: it
-%% re-enters the waiting order under its preserved {enqueued_at, sequence},
-%% so it never loses its place. The state guard makes a duplicate cast
-%% a no-op (first one flips the row to queued).
-handle_event(cast, {requeue_active, InteractionId}, _S, Data) ->
-    Config = refresh_config(Data),
-    Requeued = cx_store:tx(fun() ->
+%% force sign-out hands an ENGAGED (active/held) interaction back: the
+%% session flips the row to queued (and narrates interaction_requeued)
+%% BEFORE this cast, so adoption is a pure in-memory rebuild under the
+%% row's preserved {enqueued_at, sequence} — it never loses its place.
+%% Idempotent against duplicate casts and against recover/1 having
+%% already picked the row up; a cast that never lands is healed by
+%% recover/1 at the queue's next start.
+handle_event(cast, {adopt_queued, InteractionId}, _S, Data) ->
+    Adoptable = cx_store:tx(fun() ->
         case mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}) of
-            [Rec = #cx_interaction{state = S}] when S =:= active; S =:= held ->
-                Rec1 = Rec#cx_interaction{
-                    state = queued,
-                    agent_id = undefined,
-                    accepted_at = undefined
-                },
-                ok = mnesia:write(Rec1),
-                {requeue, Rec1, Rec#cx_interaction.agent_id};
-            _ ->
-                skip
+            [Rec = #cx_interaction{state = queued}] -> {ok, Rec};
+            _ -> skip
         end
     end),
-    case Requeued of
-        {requeue, Rec, PrevAgent} ->
-            Item = #waiting_item{
-                interaction_id = InteractionId,
-                media = Rec#cx_interaction.media_type,
-                skill_requirements = Config#cx_queue.skill_requirements,
-                enqueued_at = Rec#cx_interaction.enqueued_at,
-                sequence = Rec#cx_interaction.sequence
-            },
-            Data1 = insert_item(Item, Data#queue_state{config = Config}),
-            publish(
-                Data1,
-                Item#waiting_item.media,
-                interaction_requeued,
-                #{
-                    <<"interaction_id">> => InteractionId,
-                    <<"agent_id">> => PrevAgent
-                }
-            ),
-            {keep_state, Data1,
-                widen_actions(Item, cx_time:now_ms()) ++
-                    [{next_event, internal, route}]};
+    case Adoptable of
+        {ok, Rec} ->
+            case is_map_key(InteractionId, Data#queue_state.by_id) of
+                true ->
+                    keep_state_and_data;
+                false ->
+                    Config = refresh_config(Data),
+                    Item = #waiting_item{
+                        interaction_id = InteractionId,
+                        media = Rec#cx_interaction.media_type,
+                        skill_requirements = Config#cx_queue.skill_requirements,
+                        enqueued_at = Rec#cx_interaction.enqueued_at,
+                        sequence = Rec#cx_interaction.sequence
+                    },
+                    Data1 = insert_item(Item, Data#queue_state{config = Config}),
+                    {keep_state, Data1,
+                        widen_actions(Item, cx_time:now_ms()) ++
+                            [{next_event, internal, route}]}
+            end;
         skip ->
             keep_state_and_data
     end;
@@ -489,6 +487,9 @@ take_item(Key, Tree) ->
     Item = gb_trees:get(Key, Tree),
     {Item, gb_trees:delete(Key, Tree)}.
 
+%% Offered → queued needs no engagement-field clearing: an offered row
+%% never acquired accepted_at/qualification_ids/wrapup timestamps, and
+%% every engaged → queued writer clears them.
 requeue(#placed_offer{item = Item, agent_id = AgentId}, Penalize, EventType, Data) ->
     Item1 =
         case Penalize of
