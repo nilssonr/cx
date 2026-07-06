@@ -147,9 +147,3 @@ finalized.
 - Timestamps are `erlang:system_time(millisecond)`; ids are UUIDv4.
 - The routing decision core (`cx_routing`) is pure — property-tested,
   no processes.
-- Identifiers spell the whole word — abbreviations survive only as OTP
-  idiom (`Pid`, `_sup`, `_ms`), industry vocabulary (`jwt`, `sms`,
-  `dnd`, `db`, `authz`) or single-clause pattern bindings. Record names
-  are unique across the umbrella; the `#cx_*` prefix marks exactly the
-  Mnesia table records (record name = table name), value records stay
-  unprefixed.

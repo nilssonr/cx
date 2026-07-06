@@ -77,21 +77,36 @@ never releases.
 
 ## Naming
 
-- Identifiers spell the whole word (`session`, not `sess`; `handler`,
-  not `h`). An abbreviation survives only as (1) OTP/Erlang idiom
-  (`Pid`, `Ref`, `Acc`, `_sup`/`_app` suffixes, `Ms`/`_ms` millisecond
-  tags, `min_`/`max_`), (2) industry vocabulary stronger than its
-  expansion (`jwt`, `jwks`, `jose`, RFC-fixed claim names, `sms`,
-  `dnd`, `db`, `id`, `json`, `ws`, `authz`, `crud`), or (3) a
-  single-clause pattern binding where the pattern names the type
-  (`W = #work{...}` used a line later). Multi-line-scope variables
-  spell out.
-- Record names are unique across the whole umbrella even though Erlang
-  scopes them per module — identical names with different shapes in
-  different files is silent confusion. gen_statem data records are
-  named after the process they model (`#agent_session{}`,
-  `#presence_session{}`, `#queue_state{}`).
-- `#cx_*` on a record means exactly one thing: it is a persisted Mnesia
-  table and the record name IS the table name (table names are
+- **Symbols spell the whole word.** Modules, functions, records,
+  fields, atoms, config keys and wire keys use full words (`session`,
+  not `sess`; `handler`, not `h`; `qualification_required`, not
+  `q_required`). An abbreviation survives only as:
+  1. OTP/Erlang idiom — `Pid`, `Ref`, `Acc`, `_sup`/`_app` module
+     suffixes, `Ms`/`_ms` millisecond tags, `min_`/`max_` qualifiers;
+  2. industry vocabulary stronger than its expansion — `jwt`, `jwks`,
+     `jose`, RFC-fixed claim names (`exp`, `sub`, `kid`, …), `sms`,
+     `dnd`, `db`, `id`, `json`, `ws` (WebSocket), `authz`, `crud`.
+- **Variables.** Domain values spell the whole word and use the SAME
+  word everywhere — one greppable name per concept (`TenantId`, never
+  `T`; `InteractionId`, never `IId`). Rebinding chains use the OTP
+  naught convention: `Name0` is the incoming value, intermediates are
+  numbered, the FINAL binding is unsuffixed (`Queue0 → Queue1 →
+  Queue`); use `New`/`Old` prefixes instead when the contrast is the
+  point (`OldVsn`, `NewData`). Fixed-meaning idioms are fine at any
+  scope: `H`/`T` in `[H|T]`, `K`/`V`, `F` (a fun), `N` (a count),
+  `Acc`/`Acc0`/`AccIn`/`AccOut`, `Pid`, `Ref`, `Ms`, and single-letter
+  pattern bindings where the pattern names the type (`W = #work{…}`
+  used a line later). A function that needs `State0` through `State5`
+  doesn't need better names — it needs factoring.
+- **Record names are unique across the whole umbrella**, even though
+  Erlang scopes them per module — identical names with different
+  shapes in different files is silent confusion. gen_statem data
+  records are named after the process they model (`#agent_session{}`,
+  `#presence_session{}`, `#queue_state{}`); records for the same
+  concept on different sides get qualified names (`#pending_offer{}`
+  in the session vs `#placed_offer{}` in the queue).
+- **`#cx_*` on a record means exactly one thing:** it is a persisted
+  Mnesia table and the record name IS the table name (table names are
   node-global atoms, hence the prefix). In-memory value records stay
-  unprefixed (`#auth_context{}`, `#skill_requirement{}`).
+  unprefixed (`#auth_context{}`, `#skill_requirement{}`). Never prefix
+  a value record; never leave a table record unprefixed.
