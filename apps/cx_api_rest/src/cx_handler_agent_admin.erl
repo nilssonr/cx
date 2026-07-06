@@ -1,4 +1,4 @@
--module(cx_h_agent_admin).
+-module(cx_handler_agent_admin).
 
 %% Supervisor operations on OTHER agents' sign-in sessions — gated by
 %% agent:session:any, never part of the agent's own surface.
@@ -19,7 +19,7 @@ init(Req0, Opts = #{ctx := Ctx0}) ->
             }
         of
             {<<"DELETE">>, Tid, UserId} when is_binary(Tid), is_binary(UserId) ->
-                case cx_h:scope_tenant(Ctx0, Tid) of
+                case cx_handler:scope_tenant(Ctx0, Tid) of
                     {ok, Ctx} -> cx_router:force_stop_session(Ctx, UserId);
                     Error -> Error
                 end;
@@ -28,4 +28,4 @@ init(Req0, Opts = #{ctx := Ctx0}) ->
             _ ->
                 {error, method_not_allowed}
         end,
-    {ok, cx_h:reply(Result, Req0), Opts}.
+    {ok, cx_handler:reply(Result, Req0), Opts}.

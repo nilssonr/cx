@@ -1,7 +1,7 @@
 {application, cx_core, [
     {description, "cx domain model, Mnesia persistence, events and registry"},
     {vsn, "0.1.0"},
-    {registered, [cx_core_sup, cx_reg]},
+    {registered, [cx_core_sup, cx_registry]},
     {mod, {cx_core_app, []}},
     {applications, [
         kernel,

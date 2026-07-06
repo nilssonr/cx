@@ -1,6 +1,6 @@
--module(cx_reg_test_server).
+-module(cx_registry_test_server).
 
-%% Trivial gen_server used by cx_reg_tests to prove via-tuple registration.
+%% Trivial gen_server used by cx_registry_tests to prove via-tuple registration.
 
 -behaviour(gen_server).
 

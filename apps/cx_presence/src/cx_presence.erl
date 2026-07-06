@@ -102,7 +102,7 @@ activity(#auth_ctx{tenant_id = T, user_id = UserId}) ->
 %% session's recompute reads it through here too.
 -spec away_threshold_ms() -> pos_integer().
 away_threshold_ms() ->
-    cx_cfg:get(cx_presence, away_threshold_ms, ?AWAY_THRESHOLD_DEFAULT_MS).
+    cx_config:get(cx_presence, away_threshold_ms, ?AWAY_THRESHOLD_DEFAULT_MS).
 
 %% ---- internals ----
 
@@ -114,7 +114,7 @@ fetch_active(T, UserId) ->
     end.
 
 session_pid(T, UserId) ->
-    case cx_reg:whereis_name({presence, T, UserId}) of
+    case cx_registry:whereis_name({presence, T, UserId}) of
         Pid when is_pid(Pid) -> Pid;
         _ -> undefined
     end.
@@ -184,9 +184,9 @@ propagate(T, UserId, OldRow, Now) ->
     case session_pid(T, UserId) of
         undefined ->
             Threshold = away_threshold_ms(),
-            OldEff = cx_presence_calc:connectionless(OldRow, Now, Threshold),
+            OldEff = cx_presence_calculation:connectionless(OldRow, Now, Threshold),
             NewRow = read_decl(T, UserId),
-            NewEff = cx_presence_calc:connectionless(NewRow, Now, Threshold),
+            NewEff = cx_presence_calculation:connectionless(NewRow, Now, Threshold),
             %% publish iff state/message changed — a pure `until` change
             %% is not a transition
             case maps:remove(until, NewEff) =:= maps:remove(until, OldEff) of
@@ -215,7 +215,7 @@ propagate(T, UserId, OldRow, Now) ->
 own_map(T, UserId) ->
     Now = cx_time:now_ms(),
     Row = read_decl(T, UserId),
-    Norm = cx_presence_calc:normalize(cx_presence_calc:from_row(Row), Now),
+    Norm = cx_presence_calculation:normalize(cx_presence_calculation:from_row(Row), Now),
     {State, Message, DeviceCount} = effective_now(T, UserId, Row, Now),
     #{
         <<"state">> => State,
@@ -242,7 +242,7 @@ effective_now(T, UserId, Row, Now) ->
 
 lazy_effective(Row, Now) ->
     #{state := S, message := M} =
-        cx_presence_calc:connectionless(Row, Now, away_threshold_ms()),
+        cx_presence_calculation:connectionless(Row, Now, away_threshold_ms()),
     {S, M, 0}.
 
 %% Live eff rows only; dead-pid rows are dropped (stale-snapshot pattern).
@@ -269,7 +269,7 @@ directory_entry(#cx_user{key = {_, UserId}, name = Name}, Effs, Decls, Now) ->
             _ ->
                 Row = maps:get(UserId, Decls, undefined),
                 #{state := S, message := M, until := U} =
-                    cx_presence_calc:connectionless(Row, Now, away_threshold_ms()),
+                    cx_presence_calculation:connectionless(Row, Now, away_threshold_ms()),
                 {S, M, U}
         end,
     #{

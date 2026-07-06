@@ -74,7 +74,7 @@
 
 start_link(TenantId, AgentId, Skills, Profile) ->
     gen_statem:start_link(
-        {via, cx_reg, {agent, TenantId, AgentId}},
+        {via, cx_registry, {agent, TenantId, AgentId}},
         ?MODULE,
         [TenantId, AgentId, Skills, Profile],
         []
@@ -461,7 +461,7 @@ handle_event({call, From}, force_stop_session, _State, Data) ->
                     end;
                 _ ->
                     {_, QueueId} = W#work.queue_key,
-                    case cx_queue_proc:ensure_started(Acc#session.tenant, QueueId) of
+                    case cx_queue_process:ensure_started(Acc#session.tenant, QueueId) of
                         {ok, QPid} ->
                             gen_statem:cast(QPid, {requeue_active, IId});
                         {error, _} ->

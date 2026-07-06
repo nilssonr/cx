@@ -1,4 +1,4 @@
--module(cx_routing_props_tests).
+-module(cx_routing_properties_tests).
 
 %% PropEr properties for the routing core, wrapped in EUnit so plain
 %% `rebar3 eunit` runs them (proper is a test-profile dep).

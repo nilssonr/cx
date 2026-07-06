@@ -1,4 +1,4 @@
--module(cx_h_tenants).
+-module(cx_handler_tenants).
 
 %% Tenant admin is platform-level; cx_tenant enforces tenants:admin
 %% itself (own-tenant GET excepted), so no path/ctx rescoping here.
@@ -12,16 +12,16 @@ init(Req0, Opts = #{ctx := Ctx}) ->
         Ctx,
         Req0
     ),
-    {ok, cx_h:reply(Result, Req1), Opts}.
+    {ok, cx_handler:reply(Result, Req1), Opts}.
 
 dispatch(<<"GET">>, undefined, Ctx, Req) ->
     {cx_tenant:list(Ctx), Req};
 dispatch(<<"GET">>, Tid, Ctx, Req) ->
     {cx_tenant:get(Ctx, Tid), Req};
 dispatch(<<"POST">>, undefined, Ctx, Req) ->
-    cx_h:with_body(Req, fun(Params) -> cx_tenant:create(Ctx, Params) end);
+    cx_handler:with_body(Req, fun(Params) -> cx_tenant:create(Ctx, Params) end);
 dispatch(<<"PUT">>, Tid, Ctx, Req) when Tid =/= undefined ->
-    cx_h:with_body(Req, fun(Params) -> cx_tenant:update(Ctx, Tid, Params) end);
+    cx_handler:with_body(Req, fun(Params) -> cx_tenant:update(Ctx, Tid, Params) end);
 dispatch(<<"DELETE">>, Tid, Ctx, Req) when Tid =/= undefined ->
     {cx_tenant:delete(Ctx, Tid), Req};
 dispatch(_, _, _, Req) ->

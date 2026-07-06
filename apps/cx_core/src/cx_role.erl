@@ -80,7 +80,7 @@ to_map(#cx_role{key = {_, Id}, name = Name, permissions = Perms}) ->
 opt_perms(Params, Default) ->
     case cx_params:opt_list(Params, <<"permissions">>, Default) of
         {ok, L} ->
-            case lists:all(fun cx_perm:is_tenant_assignable/1, L) of
+            case lists:all(fun cx_permission:is_tenant_assignable/1, L) of
                 true -> {ok, L};
                 false -> {error, {invalid, <<"permissions">>}}
             end;

@@ -74,4 +74,4 @@ role_permissions(TenantId, RoleIds) ->
         end,
         RoleIds
     ),
-    sets:from_list([P || P <- Perms, cx_perm:is_tenant_assignable(P)]).
+    sets:from_list([P || P <- Perms, cx_permission:is_tenant_assignable(P)]).

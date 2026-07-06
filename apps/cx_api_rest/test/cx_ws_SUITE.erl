@@ -209,7 +209,7 @@ deactivated_user_presence_close(Config) ->
         %% kill the presence session: the socket's DOWN triggers a
         %% re-registration, which now hits {error, forbidden}
         SessPid =
-            case cx_reg:whereis_name({presence, T, UserId}) of
+            case cx_registry:whereis_name({presence, T, UserId}) of
                 P when is_pid(P) -> P
             end,
         exit(SessPid, kill),

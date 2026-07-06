@@ -16,8 +16,8 @@ init([]) ->
             start => {pg, start_link, [cx_event:scope()]}
         },
         #{
-            id => cx_reg,
-            start => {cx_reg, start_link, []}
+            id => cx_registry,
+            start => {cx_registry, start_link, []}
         }
     ],
     {ok, {SupFlags, ChildSpecs}}.

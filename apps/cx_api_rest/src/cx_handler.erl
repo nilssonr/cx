@@ -1,4 +1,4 @@
--module(cx_h).
+-module(cx_handler).
 
 %% Shared handler plumbing: JSON body reading and the single place where
 %% domain errors map to HTTP statuses. Handlers stay thin: decode ->

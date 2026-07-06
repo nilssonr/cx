@@ -63,7 +63,7 @@ stop_session(Ctx = #auth_ctx{}, Force) ->
 force_stop_session(Ctx = #auth_ctx{tenant_id = T}, UserId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:any">>),
-        case cx_reg:whereis_name({agent, T, UserId}) of
+        case cx_registry:whereis_name({agent, T, UserId}) of
             Pid when is_pid(Pid) -> call(Pid, force_stop_session);
             undefined -> ok
         end
@@ -115,7 +115,7 @@ create_interaction(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, Props} ?= validate_properties(Params),
         {ok, Queue} ?= cx_queue:fetch(T, QueueId),
         ok ?= open_queue(Queue),
-        {ok, QPid} ?= cx_queue_proc:ensure_started(T, QueueId),
+        {ok, QPid} ?= cx_queue_process:ensure_started(T, QueueId),
         {ok, IId} ?= call(QPid, {enqueue, cx_id:new(), Media, Props, cx_time:now_ms()}),
         {ok, #{<<"id">> => IId}}
     end.
@@ -125,7 +125,7 @@ cancel_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
         ok ?= cx_authz:require(Ctx, <<"interactions:cancel">>),
         {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
         {_, QueueId} = Rec#cx_interaction.queue_key,
-        {ok, QPid} ?= cx_queue_proc:ensure_started(T, QueueId),
+        {ok, QPid} ?= cx_queue_process:ensure_started(T, QueueId),
         call(QPid, {cancel, IId})
     end.
 
@@ -404,7 +404,7 @@ completed_by_me(#auth_ctx{tenant_id = T, user_id = UserId}, IId) ->
 session_of(#auth_ctx{tenant_id = T, user_id = UserId}) ->
     case
         UserId =/= undefined andalso
-            cx_reg:whereis_name({agent, T, UserId})
+            cx_registry:whereis_name({agent, T, UserId})
     of
         Pid when is_pid(Pid) -> {ok, Pid};
         _ -> {error, no_session}

@@ -102,7 +102,7 @@ disconnect_publishes_offline_and_stops(_Config) ->
     {ok, #{<<"user_id">> := UserId, <<"state">> := <<"offline">>}} =
         wait_presence(),
     ok = wait_until(fun() ->
-        cx_reg:whereis_name({presence, T, UserId}) =:= undefined
+        cx_registry:whereis_name({presence, T, UserId}) =:= undefined
     end),
     ?assertEqual([], mnesia:dirty_read(cx_presence_eff, {T, UserId})),
     stop_conn(Conn),

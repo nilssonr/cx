@@ -412,7 +412,7 @@ agent_crash_requeues(_Config) ->
         ),
     {ok, #{<<"interaction_id">> := I1}} = wait_data(offer_created),
 
-    SessionPid = cx_reg:whereis_name({agent, T, UserA}),
+    SessionPid = cx_registry:whereis_name({agent, T, UserA}),
     true = is_pid(SessionPid) andalso exit(SessionPid, kill),
     {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_requeued),
 
@@ -449,10 +449,10 @@ queue_restart_preserves_order(_Config) ->
          || _ <- [1, 2, 3]
         ],
 
-    OldPid = cx_reg:whereis_name({queue, T, QueueId}),
+    OldPid = cx_registry:whereis_name({queue, T, QueueId}),
     true = is_pid(OldPid) andalso exit(OldPid, kill),
     ok = wait_until(fun() ->
-        case cx_reg:whereis_name({queue, T, QueueId}) of
+        case cx_registry:whereis_name({queue, T, QueueId}) of
             undefined -> false;
             Pid -> Pid =/= OldPid
         end
@@ -966,7 +966,7 @@ reject_releases_monitor(_Config) ->
         ),
     {ok, #{<<"offer_id">> := OfferId}} = wait_data(offer_created),
     QueuePid =
-        case cx_reg:whereis_name({queue, T, QueueId}) of
+        case cx_registry:whereis_name({queue, T, QueueId}) of
             P when is_pid(P) -> P
         end,
     ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),

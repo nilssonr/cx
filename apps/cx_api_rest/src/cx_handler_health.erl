@@ -1,4 +1,4 @@
--module(cx_h_health).
+-module(cx_handler_health).
 
 -export([init/2]).
 

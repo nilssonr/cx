@@ -1,4 +1,4 @@
--module(cx_cfg).
+-module(cx_config).
 
 %% Typed boundary for application env: config values are dynamic by
 %% nature (sys.config is untyped data), so one dynamic() seam here beats

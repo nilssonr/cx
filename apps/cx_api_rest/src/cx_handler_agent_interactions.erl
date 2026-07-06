@@ -1,4 +1,4 @@
--module(cx_h_agent_interactions).
+-module(cx_handler_agent_interactions).
 
 %% Operations on interactions the agent owns; the op comes from the
 %% route (cx_rest_routes), the interaction from the :interaction_id
@@ -35,11 +35,11 @@ init(Req0, Opts = #{ctx := Ctx, op := Op}) ->
             {<<"POST">>, resume} ->
                 {cx_router:resume(Ctx, IId), Req0};
             {<<"PUT">>, qualifications} ->
-                cx_h:with_body(Req0, fun(Params) ->
+                cx_handler:with_body(Req0, fun(Params) ->
                     cx_router:qualify(Ctx, IId, Params)
                 end);
             {<<"POST">>, wrapup_extend} ->
-                cx_h:with_body(Req0, fun(Params) ->
+                cx_handler:with_body(Req0, fun(Params) ->
                     cx_router:extend_wrapup(
                         Ctx,
                         IId,
@@ -51,4 +51,4 @@ init(Req0, Opts = #{ctx := Ctx, op := Op}) ->
             _ ->
                 {{error, method_not_allowed}, Req0}
         end,
-    {ok, cx_h:reply(Result, Req1), Opts}.
+    {ok, cx_handler:reply(Result, Req1), Opts}.

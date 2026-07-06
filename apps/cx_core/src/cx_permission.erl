@@ -1,4 +1,4 @@
--module(cx_perm).
+-module(cx_permission).
 
 %% The product's permission vocabulary. Permissions are hard-coded
 %% product concepts (the cx_media/cx_presence_state charter): every
@@ -12,7 +12,7 @@
 %% platform-admin wildcard produced exclusively by cx_auth_claims for
 %% subjects listed in the cx_auth `platform_admin_subjects` env.
 %% tenants:admin is platform-only: it gates tenant CRUD and
-%% cross-tenant rescoping (cx_h:scope_tenant), so granting it from
+%% cross-tenant rescoping (cx_handler:scope_tenant), so granting it from
 %% inside a tenant would break tenant isolation.
 
 -export([all/0, tenant_assignable/0, platform_only/0, is_tenant_assignable/1]).

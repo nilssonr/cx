@@ -1,4 +1,4 @@
--module(cx_h_agent_ready).
+-module(cx_handler_agent_ready).
 
 %% PUT /api/v1/agent/media/:media_type/state
 %%   {"state": "ready"} | {"state": "not_ready", "reason_id": "..."}
@@ -10,7 +10,7 @@ init(Req0, Opts = #{ctx := Ctx}) ->
     {Result, Req1} =
         case cowboy_req:method(Req0) of
             <<"PUT">> ->
-                cx_h:with_body(Req0, fun(Params) ->
+                cx_handler:with_body(Req0, fun(Params) ->
                     case parse_state(Params) of
                         {ok, ReadyState} ->
                             cx_router:set_ready(Ctx, Media, ReadyState);
@@ -21,7 +21,7 @@ init(Req0, Opts = #{ctx := Ctx}) ->
             _ ->
                 {{error, method_not_allowed}, Req0}
         end,
-    {ok, cx_h:reply(Result, Req1), Opts}.
+    {ok, cx_handler:reply(Result, Req1), Opts}.
 
 %% A reason on "ready" is a client bug — reject rather than drop it.
 parse_state(#{<<"state">> := <<"ready">>, <<"reason_id">> := _}) ->

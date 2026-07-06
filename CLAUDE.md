@@ -52,7 +52,7 @@ never releases.
 - Mnesia match patterns are constructed ONLY in `cx_patterns` (the one
   eqWAlizer-exempt src module). Need a new pattern? Add a function there.
 - `eqwalizer:dynamic()` is for genuine dynamic boundaries only: Mnesia
-  rows (`cx_store`), app env (`cx_cfg`), JSON decode (`cx_json`). Do not
+  rows (`cx_store`), app env (`cx_config`), JSON decode (`cx_json`). Do not
   sprinkle it inland to silence errors — refine with guards/pattern
   matches instead.
 - Module-level `-eqwalizer(ignore).` is reserved for macro-generated code
@@ -66,7 +66,7 @@ never releases.
   `cx_db:table_specs/0`.
 - Every domain operation is a plain function taking `#auth_ctx{}` as its
   first argument; `cx_authz:require/2` is called in the domain layer,
-  never in transports. REST handlers only decode → call → `cx_h:reply`.
+  never in transports. REST handlers only decode → call → `cx_handler:reply`.
 - Processes: named generic timeouts only (never `erlang:send_after` in
   gen_statem); queues call sessions, sessions never call queues (the
   facade talks to both) — keep it that way to stay deadlock-free.

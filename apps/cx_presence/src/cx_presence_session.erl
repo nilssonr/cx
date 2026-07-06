@@ -31,7 +31,7 @@
     user_id :: binary(),
     %% ConnPid => {MonRef, DeviceInfo}
     conns = #{} :: #{pid() => {reference(), map()}},
-    declared :: cx_presence_calc:declared(),
+    declared :: cx_presence_calculation:declared(),
     last_activity :: integer(),
     %% last published {State, Message}; undefined forces first publish
     last_effective :: {binary(), binary() | undefined} | undefined
@@ -39,7 +39,7 @@
 
 start_link(TenantId, UserId) ->
     gen_statem:start_link(
-        {via, cx_reg, {presence, TenantId, UserId}},
+        {via, cx_registry, {presence, TenantId, UserId}},
         ?MODULE,
         [TenantId, UserId],
         []
@@ -131,7 +131,7 @@ read_declared(TenantId, UserId) ->
             [R] -> R;
             [] -> undefined
         end,
-    cx_presence_calc:from_row(Row).
+    cx_presence_calculation:from_row(Row).
 
 %% The single choke point: pure calc -> eff-row write -> publish iff
 %% changed -> re-arm timers. (Future presence->readiness tenant policy
@@ -141,11 +141,11 @@ recompute(Data = #pd{tenant = T, user_id = U}) ->
     Threshold = cx_presence:away_threshold_ms(),
     DeviceCount = map_size(Data#pd.conns),
     #{state := State, message := Message} =
-        cx_presence_calc:effective(
+        cx_presence_calculation:effective(
             Data#pd.declared, DeviceCount, Data#pd.last_activity, Now, Threshold
         ),
     #{manual_state := NormManual, until := NormUntil} =
-        cx_presence_calc:normalize(Data#pd.declared, Now),
+        cx_presence_calculation:normalize(Data#pd.declared, Now),
     write_eff(Data, State, Message, NormUntil, DeviceCount, Now),
     Changed = {State, Message} =/= Data#pd.last_effective,
     Changed andalso publish(T, U, State, Message, NormUntil),

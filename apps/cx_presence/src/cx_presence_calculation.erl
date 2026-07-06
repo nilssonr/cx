@@ -1,4 +1,4 @@
--module(cx_presence_calc).
+-module(cx_presence_calculation).
 
 %% The pure core of collaboration presence: effective presence is
 %% COMPUTED from the declared layer (durable) plus live connectivity

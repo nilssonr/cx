@@ -1,4 +1,4 @@
--module(cx_h_interactions).
+-module(cx_handler_interactions).
 
 %% Integrator surface:
 %%   POST /api/v1/interactions            {"queue_id", "media_type", "properties"}
@@ -20,10 +20,10 @@ init(Req0, Opts = #{ctx := Ctx}) ->
         Ctx,
         Req0
     ),
-    {ok, cx_h:reply(Result, Req1), Opts}.
+    {ok, cx_handler:reply(Result, Req1), Opts}.
 
 dispatch(<<"POST">>, undefined, undefined, Ctx, Req) ->
-    cx_h:with_body(Req, fun(Params) ->
+    cx_handler:with_body(Req, fun(Params) ->
         cx_router:create_interaction(Ctx, Params)
     end);
 dispatch(<<"GET">>, undefined, undefined, Ctx, Req) ->

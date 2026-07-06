@@ -1,4 +1,4 @@
--module(cx_ws_proto).
+-module(cx_ws_protocol).
 
 %% Pure protocol layer for the WebSocket transport: client-frame
 %% decoding, server-frame encoding and the event filter. No processes,

@@ -1,4 +1,4 @@
--module(cx_reg).
+-module(cx_registry).
 
 %% Minimal via-compatible local process registry for composite names like
 %% {agent, TenantId, UserId} and {queue, TenantId, QueueId}.

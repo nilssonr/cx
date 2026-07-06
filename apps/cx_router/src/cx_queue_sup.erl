@@ -19,8 +19,8 @@ init([]) ->
     SupFlags = #{strategy => simple_one_for_one, intensity => 10, period => 10},
     ChildSpecs = [
         #{
-            id => cx_queue_proc,
-            start => {cx_queue_proc, start_link, []},
+            id => cx_queue_process,
+            start => {cx_queue_process, start_link, []},
             restart => transient
         }
     ],

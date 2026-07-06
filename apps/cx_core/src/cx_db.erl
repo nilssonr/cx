@@ -12,7 +12,7 @@
 
 -spec init() -> ok.
 init() ->
-    Dir = cx_cfg:get(cx_core, mnesia_dir, "data/mnesia"),
+    Dir = cx_config:get(cx_core, mnesia_dir, "data/mnesia"),
     ok = filelib:ensure_path(Dir),
     ok = ensure_loaded(),
     %% If some environment (rebar3 shell, test runner) already started

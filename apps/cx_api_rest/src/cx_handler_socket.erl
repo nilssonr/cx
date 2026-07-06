@@ -1,4 +1,4 @@
--module(cx_h_socket).
+-module(cx_handler_socket).
 
 %% The push transport: one cowboy_websocket process per connected agent
 %% app. First-frame auth (browsers cannot set Authorization on a
@@ -52,39 +52,39 @@ init(Req, _Opts) ->
     State = #ws{
         ua = cowboy_req:header(<<"user-agent">>, Req),
         peer = Peer,
-        max_queue = cx_cfg:get(cx_api_rest, ws_max_queue, 1000)
+        max_queue = cx_config:get(cx_api_rest, ws_max_queue, 1000)
     },
     {cowboy_websocket, Req, State, #{
-        idle_timeout => cx_cfg:get(cx_api_rest, ws_idle_timeout_ms, 60000),
+        idle_timeout => cx_config:get(cx_api_rest, ws_idle_timeout_ms, 60000),
         max_frame_size => 65536
     }}.
 
 websocket_init(State) ->
-    AuthTimeout = cx_cfg:get(cx_api_rest, ws_auth_timeout_ms, 10000),
+    AuthTimeout = cx_config:get(cx_api_rest, ws_auth_timeout_ms, 10000),
     TRef = erlang:start_timer(AuthTimeout, self(), auth_deadline),
     {[], State#ws{auth_tref = TRef}}.
 
 %% ---- frames ----
 
 websocket_handle({text, Frame}, State = #ws{phase = unauth}) ->
-    case cx_ws_proto:decode(Frame) of
+    case cx_ws_protocol:decode(Frame) of
         {auth, Token, DeviceId} ->
             authenticate(Token, DeviceId, State);
         _ ->
             {[{close, 4400, <<"expected_auth">>}], State}
     end;
 websocket_handle({text, Frame}, State = #ws{phase = ready}) ->
-    case cx_ws_proto:decode(Frame) of
+    case cx_ws_protocol:decode(Frame) of
         ping ->
             %% the one frame guaranteed to recur on quiet connections —
             %% hibernate here to cap idle heap
-            {[{text, cx_ws_proto:pong_frame()}], State, hibernate};
+            {[{text, cx_ws_protocol:pong_frame()}], State, hibernate};
         activity ->
             {[], report_activity(State)};
         {auth, _, _} ->
-            {[{text, cx_ws_proto:error_frame(<<"already_authenticated">>)}], State};
+            {[{text, cx_ws_protocol:error_frame(<<"already_authenticated">>)}], State};
         {error, invalid_frame} ->
-            {[{text, cx_ws_proto:error_frame(<<"invalid_frame">>)}], State}
+            {[{text, cx_ws_protocol:error_frame(<<"invalid_frame">>)}], State}
     end;
 websocket_handle(_Other, State) ->
     %% binary frames (or anything else) are protocol violations pre- and
@@ -134,9 +134,9 @@ websocket_info({cx_event, {_T, QueueId, Media, Event}}, State = #ws{phase = read
             {[{close, 4429, <<"slow_consumer">>}], State};
         false ->
             UserId = (State#ws.ctx)#auth_ctx.user_id,
-            case cx_ws_proto:relevant(Event, UserId) of
+            case cx_ws_protocol:relevant(Event, UserId) of
                 true ->
-                    {[{text, cx_ws_proto:event_frame(QueueId, Media, Event)}], State};
+                    {[{text, cx_ws_protocol:event_frame(QueueId, Media, Event)}], State};
                 false ->
                     {[], State}
             end
@@ -194,7 +194,7 @@ authenticate(Token, DeviceId, State) ->
                 exp_ms = ExpMs,
                 session_tref = schedule_session_check(ExpMs)
             }),
-            Ready = cx_ws_proto:ready_frame(UserId, T, DeviceId),
+            Ready = cx_ws_protocol:ready_frame(UserId, T, DeviceId),
             %% ready first; a close command (if any) follows it in order
             {[{text, Ready} | Cmds], State1}
     end.
@@ -208,7 +208,7 @@ cancel_auth_timer(TRef) ->
 %% Next re-validation: every ws_session_check_ms, but never past exp —
 %% expiry closes the socket at exp, not up to an interval late.
 schedule_session_check(ExpMs) ->
-    Interval = cx_cfg:get(cx_api_rest, ws_session_check_ms, 60000),
+    Interval = cx_config:get(cx_api_rest, ws_session_check_ms, 60000),
     Delay = max(0, min(Interval, ExpMs - cx_time:now_ms())),
     erlang:start_timer(Delay, self(), session_check).
 
@@ -238,7 +238,7 @@ register_presence(State = #ws{ctx = Ctx, presence_retries = N}) ->
     end.
 
 schedule_presence_retry() ->
-    RetryMs = cx_cfg:get(cx_api_rest, ws_presence_retry_ms, 1000),
+    RetryMs = cx_config:get(cx_api_rest, ws_presence_retry_ms, 1000),
     erlang:start_timer(RetryMs, self(), presence_retry).
 
 report_activity(State = #ws{last_activity = Last}) ->

@@ -1,4 +1,4 @@
--module(cx_queue_proc).
+-module(cx_queue_process).
 
 %% One process per queue. Owns the waiting order (gb_trees keyed by
 %% {enqueued_at, seq} — assigned once, stored in Mnesia, so a rejected,
@@ -49,7 +49,7 @@
 
 start_link(TenantId, QueueId) ->
     gen_statem:start_link(
-        {via, cx_reg, {queue, TenantId, QueueId}},
+        {via, cx_registry, {queue, TenantId, QueueId}},
         ?MODULE,
         [TenantId, QueueId],
         []
@@ -57,7 +57,7 @@ start_link(TenantId, QueueId) ->
 
 -spec ensure_started(binary(), binary()) -> {ok, pid()} | {error, term()}.
 ensure_started(TenantId, QueueId) ->
-    case cx_reg:whereis_name({queue, TenantId, QueueId}) of
+    case cx_registry:whereis_name({queue, TenantId, QueueId}) of
         undefined ->
             case cx_queue_sup:start_queue(TenantId, QueueId) of
                 {ok, Pid} -> {ok, Pid};

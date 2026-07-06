@@ -1,4 +1,4 @@
--module(cx_h_agent_offers).
+-module(cx_handler_agent_offers).
 
 %% The agent's pending (ringing) offers. GETs are the REST snapshot /
 %% rehydration path — the WebSocket events remain the push path. A
@@ -22,4 +22,4 @@ init(Req0, Opts = #{ctx := Ctx, op := Op}) ->
             {<<"POST">>, rejected} -> cx_router:reject_offer(Ctx, OfferId);
             _ -> {error, method_not_allowed}
         end,
-    {ok, cx_h:reply(Result, Req0), Opts}.
+    {ok, cx_handler:reply(Result, Req0), Opts}.

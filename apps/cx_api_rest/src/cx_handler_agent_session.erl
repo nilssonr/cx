@@ -1,4 +1,4 @@
--module(cx_h_agent_session).
+-module(cx_handler_agent_session).
 
 %% The agent's SIGN-IN session (the per-agent router process) — not to
 %% be confused with the customer session, which is the interaction.
@@ -21,7 +21,7 @@ init(Req0, Opts = #{ctx := Ctx}) ->
             <<"DELETE">> -> cx_router:stop_session(Ctx, is_force(Req0));
             _ -> {error, method_not_allowed}
         end,
-    {ok, cx_h:reply(Result, Req0), Opts}.
+    {ok, cx_handler:reply(Result, Req0), Opts}.
 
 is_force(Req) ->
     proplists:get_value(<<"force">>, cowboy_req:parse_qs(Req)) =:= <<"true">>.

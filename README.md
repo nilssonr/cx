@@ -41,10 +41,10 @@ that makes an agent routable at all.
 
 | App | Responsibility |
 |---|---|
-| `cx_core` | Domain model, Mnesia (`cx_db`), events (`cx_event`), registry (`cx_reg`) |
+| `cx_core` | Domain model, Mnesia (`cx_db`), events (`cx_event`), registry (`cx_registry`) |
 | `cx_auth` | JWT validation against the issuer's JWKS, claims → tenant/permissions |
 | `cx_router` | Agent sessions, queue processes, offers — pure decision core in `cx_routing` |
-| `cx_presence` | Collaboration presence — pure precedence core in `cx_presence_calc` |
+| `cx_presence` | Collaboration presence — pure precedence core in `cx_presence_calculation` |
 | `cx_api_rest` | Thin cowboy binding over the domain functions + the WebSocket push transport |
 
 ## Presence
