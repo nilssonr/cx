@@ -6,7 +6,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx}) ->
+init(Req0, Opts = #{context := Ctx}) ->
     Result =
         case cowboy_req:method(Req0) of
             <<"GET">> -> cx_presence:directory(Ctx);

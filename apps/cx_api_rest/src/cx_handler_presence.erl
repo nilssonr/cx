@@ -5,7 +5,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx}) ->
+init(Req0, Opts = #{context := Ctx}) ->
     {Result, Req1} =
         case cowboy_req:method(Req0) of
             <<"GET">> ->

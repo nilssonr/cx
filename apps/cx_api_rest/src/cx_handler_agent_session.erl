@@ -15,7 +15,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx}) ->
+init(Req0, Opts = #{context := Ctx}) ->
     Result =
         case cowboy_req:method(Req0) of
             <<"POST">> -> cx_router:start_session(Ctx);

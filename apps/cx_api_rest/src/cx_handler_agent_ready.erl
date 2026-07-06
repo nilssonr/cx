@@ -5,7 +5,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx}) ->
+init(Req0, Opts = #{context := Ctx}) ->
     Media = cowboy_req:binding(media_type, Req0),
     {Result, Req1} =
         case cowboy_req:method(Req0) of

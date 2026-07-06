@@ -7,7 +7,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx0, module := Mod}) ->
+init(Req0, Opts = #{context := Ctx0, module := Mod}) ->
     {Result, Req1} =
         case {cowboy_req:binding(tenant_id, Req0), cowboy_req:binding(id, Req0)} of
             {TenantId, Id} when is_binary(TenantId), is_binary(Id) orelse Id =:= undefined ->

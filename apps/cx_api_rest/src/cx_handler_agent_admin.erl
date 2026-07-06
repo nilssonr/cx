@@ -9,7 +9,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx0}) ->
+init(Req0, Opts = #{context := Ctx0}) ->
     Result =
         case
             {

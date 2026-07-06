@@ -12,7 +12,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx, op := Op}) ->
+init(Req0, Opts = #{context := Ctx, operation := Op}) ->
     OfferId = cowboy_req:binding(offer_id, Req0),
     Result =
         case {cowboy_req:method(Req0), Op} of

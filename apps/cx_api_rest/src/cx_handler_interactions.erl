@@ -11,8 +11,8 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx}) ->
-    Op = maps:get(op, Opts, undefined),
+init(Req0, Opts = #{context := Ctx}) ->
+    Op = maps:get(operation, Opts, undefined),
     {Result, Req1} = dispatch(
         cowboy_req:method(Req0),
         Op,

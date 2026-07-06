@@ -67,7 +67,7 @@ with_body(Req0, Fun) ->
     end.
 
 %% Admin routes carry :tenant_id. Operating on your own tenant is the normal
-%% case; operating on another requires tenants:admin, and the ctx is
+%% case; operating on another requires tenants:admin, and the context is
 %% rescoped to the path tenant so every downstream key is built from it.
 -spec scope_tenant(#auth_context{}, binary()) ->
     {ok, #auth_context{}} | {error, forbidden}.

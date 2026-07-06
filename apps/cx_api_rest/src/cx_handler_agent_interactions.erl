@@ -20,7 +20,7 @@
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx, op := Op}) ->
+init(Req0, Opts = #{context := Ctx, operation := Op}) ->
     InteractionId = cowboy_req:binding(interaction_id, Req0),
     {Result, Req1} =
         case {cowboy_req:method(Req0), Op} of

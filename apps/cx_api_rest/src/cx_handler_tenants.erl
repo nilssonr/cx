@@ -1,11 +1,11 @@
 -module(cx_handler_tenants).
 
 %% Tenant admin is platform-level; cx_tenant enforces tenants:admin
-%% itself (own-tenant GET excepted), so no path/ctx rescoping here.
+%% itself (own-tenant GET excepted), so no path/context rescoping here.
 
 -export([init/2]).
 
-init(Req0, Opts = #{ctx := Ctx}) ->
+init(Req0, Opts = #{context := Ctx}) ->
     {Result, Req1} = dispatch(
         cowboy_req:method(Req0),
         cowboy_req:binding(tenant_id, Req0),

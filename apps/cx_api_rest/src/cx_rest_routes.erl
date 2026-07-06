@@ -48,37 +48,37 @@ routes() ->
         %% agent operations — identity comes from the token, never the path
         {"/api/v1/agent/session", cx_handler_agent_session, #{}},
         {"/api/v1/agent/media/:media_type/state", cx_handler_agent_ready, #{}},
-        {"/api/v1/agent/offers", cx_handler_agent_offers, #{op => list}},
-        {"/api/v1/agent/offers/:offer_id", cx_handler_agent_offers, #{op => get}},
-        {"/api/v1/agent/offers/:offer_id/accept", cx_handler_agent_offers, #{op => accepted}},
-        {"/api/v1/agent/offers/:offer_id/reject", cx_handler_agent_offers, #{op => rejected}},
-        {"/api/v1/agent/interactions", cx_handler_agent_interactions, #{op => list}},
+        {"/api/v1/agent/offers", cx_handler_agent_offers, #{operation => list}},
+        {"/api/v1/agent/offers/:offer_id", cx_handler_agent_offers, #{operation => get}},
+        {"/api/v1/agent/offers/:offer_id/accept", cx_handler_agent_offers, #{operation => accepted}},
+        {"/api/v1/agent/offers/:offer_id/reject", cx_handler_agent_offers, #{operation => rejected}},
+        {"/api/v1/agent/interactions", cx_handler_agent_interactions, #{operation => list}},
         {"/api/v1/agent/interactions/:interaction_id", cx_handler_agent_interactions, #{
-            op => get
+            operation => get
         }},
         {"/api/v1/agent/interactions/:interaction_id/complete", cx_handler_agent_interactions, #{
-            op => complete
+            operation => complete
         }},
         {"/api/v1/agent/interactions/:interaction_id/hold", cx_handler_agent_interactions, #{
-            op => hold
+            operation => hold
         }},
         {"/api/v1/agent/interactions/:interaction_id/resume", cx_handler_agent_interactions, #{
-            op => resume
+            operation => resume
         }},
         {"/api/v1/agent/interactions/:interaction_id/qualifications", cx_handler_agent_interactions,
             #{
-                op => qualifications
+                operation => qualifications
             }},
         {"/api/v1/agent/interactions/:interaction_id/wrapup/extend", cx_handler_agent_interactions,
             #{
-                op => wrapup_extend
+                operation => wrapup_extend
             }},
         {"/api/v1/agent/interactions/:interaction_id/wrapup/finalize",
             cx_handler_agent_interactions, #{
-                op => wrapup_finalize
+                operation => wrapup_finalize
             }},
 
         %% integrator surface — Open Media rides on this
-        {"/api/v1/interactions/:id/cancel", cx_handler_interactions, #{op => cancel}},
+        {"/api/v1/interactions/:id/cancel", cx_handler_interactions, #{operation => cancel}},
         {"/api/v1/interactions[/:id]", cx_handler_interactions, #{}}
     ].
