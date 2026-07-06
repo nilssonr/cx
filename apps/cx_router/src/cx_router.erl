@@ -142,7 +142,8 @@ get_interaction(Ctx = #auth_context{tenant_id = TenantId}, InteractionId) ->
 %% Tenant-wide, filterable, cursor-paginated. Filters arrive as the raw
 %% query-string map; unknown keys are ignored, malformed values are 422.
 %% M1 scale note: this match-objects the tenant's interactions and
-%% filters/sorts in memory — revisit with a real index when volume says so.
+%% filters/sorts in memory — revisit with a real index (including one on
+%% #cx_interaction.agent_id for that filter) when volume says so.
 list_interactions(Ctx = #auth_context{tenant_id = TenantId}, Filters) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:read">>),
@@ -151,7 +152,7 @@ list_interactions(Ctx = #auth_context{tenant_id = TenantId}, Filters) ->
         Recs = cx_store:dirty_list(cx_interaction, cx_patterns:interactions(TenantId)),
         Matching = [R || R <- Recs, matches_filters(R, Filters)],
         Sorted = lists:sort(fun newest_first/2, Matching),
-        Page = page_after(Sorted, maps:get(<<"after">>, Filters, undefined), Limit),
+        Page = page_after(Sorted, maps:get(<<"after">>, Filters, undefined), TenantId, Limit),
         Next =
             case length(Page) =:= Limit andalso Page =/= [] of
                 true -> element(2, (lists:last(Page))#cx_interaction.key);
@@ -270,19 +271,29 @@ oldest_first(A, B) ->
     {A#cx_interaction.accepted_at, A#cx_interaction.key} =<
         {B#cx_interaction.accepted_at, B#cx_interaction.key}.
 
-page_after(Sorted, undefined, Limit) ->
+%% Position-based cursoring: the cursor id resolves against the TABLE
+%% (not the filtered list) to its {created_at, key} sort position, so a
+%% cursor row that changed state between pages — and no longer matches
+%% the filters — still marks where the next page starts instead of
+%% silently ending the walk.
+page_after(Sorted, undefined, _TenantId, Limit) ->
     lists:sublist(Sorted, Limit);
-page_after(Sorted, AfterId, Limit) when is_binary(AfterId) ->
-    Rest = lists:dropwhile(
-        fun(R) -> element(2, R#cx_interaction.key) =/= AfterId end,
-        Sorted
-    ),
-    case Rest of
-        %% unknown/expired cursor: an empty page, never an error
-        [] -> [];
-        [_ | Tail] -> lists:sublist(Tail, Limit)
+page_after(Sorted, AfterId, TenantId, Limit) when is_binary(AfterId) ->
+    case cx_store:dirty_read(cx_interaction, {TenantId, AfterId}) of
+        {ok, Cursor = #cx_interaction{}} ->
+            Position = {Cursor#cx_interaction.created_at, Cursor#cx_interaction.key},
+            Rest = lists:dropwhile(
+                fun(R) ->
+                    {R#cx_interaction.created_at, R#cx_interaction.key} >= Position
+                end,
+                Sorted
+            ),
+            lists:sublist(Rest, Limit);
+        {error, not_found} ->
+            %% unknown/expired cursor: an empty page, never an error
+            []
     end;
-page_after(_Sorted, _, _Limit) ->
+page_after(_Sorted, _, _TenantId, _Limit) ->
     [].
 
 %% ---- offer handling and completion (the agent side) ----

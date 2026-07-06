@@ -33,6 +33,7 @@
     queue_recover_reconciles_stranded_engaged/1,
     queue_recover_completes_stranded_wrapup/1,
     sign_out_returns_offer_unpenalized/1,
+    list_pagination_cursor_stability/1,
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
@@ -69,6 +70,7 @@ all() ->
         queue_recover_reconciles_stranded_engaged,
         queue_recover_completes_stranded_wrapup,
         sign_out_returns_offer_unpenalized,
+        list_pagination_cursor_stability,
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
@@ -1349,6 +1351,47 @@ sign_out_returns_offer_unpenalized(_Config) ->
     {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserA}} =
         wait_data(offer_created, 2000),
     ok = cx_router:stop_session(AgentA1),
+    ok.
+
+%% Cursor paging is position-based: a cursor row that leaves the
+%% filtered set between pages must not end the walk (it previously
+%% cursored over the FILTERED list and silently returned []).
+list_pagination_cursor_stability(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    Integrator = integrator(T),
+    Ids = [
+        begin
+            {ok, #{<<"id">> := I}} =
+                cx_router:create_interaction(
+                    Integrator,
+                    #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+                ),
+            I
+        end
+     || _ <- [1, 2, 3]
+    ],
+    Filters = #{<<"state">> => <<"queued">>, <<"limit">> => <<"1">>},
+    {ok, #{<<"items">> := [#{<<"id">> := First}], <<"next">> := First}} =
+        cx_router:list_interactions(Integrator, Filters),
+
+    %% the cursor row leaves the filtered set...
+    ok = cx_router:cancel_interaction(Integrator, First),
+    %% ...and the walk still reaches the remaining rows
+    {ok, #{<<"items">> := [#{<<"id">> := Second}]}} =
+        cx_router:list_interactions(Integrator, Filters#{<<"after">> => First}),
+    {ok, #{<<"items">> := [#{<<"id">> := Third}]}} =
+        cx_router:list_interactions(Integrator, Filters#{<<"after">> => Second}),
+    ?assertEqual(lists:sort(Ids), lists:sort([First, Second, Third])),
+
+    %% unknown cursor: an empty page, never an error
+    {ok, #{<<"items">> := [], <<"next">> := null}} =
+        cx_router:list_interactions(Integrator, Filters#{<<"after">> => <<"ghost">>}),
     ok.
 
 %% A configured-but-missing routing profile must refuse the session —
