@@ -119,7 +119,7 @@ handle_event({call, From}, {set_ready, Media, NewState}, _State, Data) ->
 handle_event({call, From}, {offer, Offer}, _State, Data) ->
     #{
         offer_id := OfferId,
-        interaction_id := IId,
+        interaction_id := InteractionId,
         media := Media,
         queue_key := QueueKey,
         queue_pid := QueuePid,
@@ -134,7 +134,7 @@ handle_event({call, From}, {offer, Offer}, _State, Data) ->
             Pending = maps:put(
                 OfferId,
                 #pending_offer{
-                    interaction_id = IId,
+                    interaction_id = InteractionId,
                     media = Media,
                     queue_key = QueueKey,
                     queue_pid = QueuePid,
@@ -155,8 +155,8 @@ handle_event({call, From}, {pending_queue, OfferId}, _State, Data) ->
             {keep_state_and_data, [{reply, From, {ok, QueuePid}}]};
         _ ->
             case lists:keyfind(OfferId, 1, Data#agent_session.recent_accepts) of
-                {OfferId, IId} ->
-                    {keep_state_and_data, [{reply, From, {recently_accepted, IId}}]};
+                {OfferId, InteractionId} ->
+                    {keep_state_and_data, [{reply, From, {recently_accepted, InteractionId}}]};
                 false ->
                     {keep_state_and_data, [{reply, From, {error, not_found}}]}
             end
@@ -178,7 +178,10 @@ handle_event(cast, {offer_accepted, OfferId}, _State, Data) ->
     case maps:take(OfferId, Data#agent_session.pending) of
         {
             #pending_offer{
-                interaction_id = IId, media = Media, queue_key = QueueKey, monitor_ref = MonitorRef
+                interaction_id = InteractionId,
+                media = Media,
+                queue_key = QueueKey,
+                monitor_ref = MonitorRef
             },
             Pending
         } ->
@@ -186,12 +189,12 @@ handle_event(cast, {offer_accepted, OfferId}, _State, Data) ->
             Data1 = Data#agent_session{
                 pending = Pending,
                 work = maps:put(
-                    IId,
+                    InteractionId,
                     #work{media = Media, queue_key = QueueKey},
                     Data#agent_session.work
                 ),
                 recent_accepts = lists:sublist(
-                    [{OfferId, IId} | Data#agent_session.recent_accepts],
+                    [{OfferId, InteractionId} | Data#agent_session.recent_accepts],
                     ?RECENT_ACCEPTS_MAX
                 )
             },
@@ -214,50 +217,50 @@ handle_event(cast, {offer_withdrawn, OfferId}, _State, Data) ->
     end;
 %% ---- hold / resume ----
 
-handle_event({call, From}, {hold, IId}, _State, Data) ->
+handle_event({call, From}, {hold, InteractionId}, _State, Data) ->
     case Data#agent_session.work of
-        #{IId := W = #work{phase = active}} ->
-            case set_state(Data, IId, active, held, #{}) of
+        #{InteractionId := W = #work{phase = active}} ->
+            case set_state(Data, InteractionId, active, held, #{}) of
                 ok ->
-                    Data1 = put_work(IId, W#work{phase = held}, Data),
-                    publish_i(Data1, W, IId, interaction_held, #{}),
+                    Data1 = put_work(InteractionId, W#work{phase = held}, Data),
+                    publish_i(Data1, W, InteractionId, interaction_held, #{}),
                     {keep_state, Data1, [{reply, From, ok}]};
                 {error, conflict} ->
                     {keep_state_and_data, [{reply, From, {error, conflict}}]}
             end;
-        #{IId := _} ->
+        #{InteractionId := _} ->
             {keep_state_and_data, [{reply, From, {error, not_active}}]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
     end;
-handle_event({call, From}, {resume, IId}, _State, Data) ->
+handle_event({call, From}, {resume, InteractionId}, _State, Data) ->
     case Data#agent_session.work of
-        #{IId := W = #work{phase = held}} ->
-            case set_state(Data, IId, held, active, #{}) of
+        #{InteractionId := W = #work{phase = held}} ->
+            case set_state(Data, InteractionId, held, active, #{}) of
                 ok ->
-                    Data1 = put_work(IId, W#work{phase = active}, Data),
-                    publish_i(Data1, W, IId, interaction_resumed, #{}),
+                    Data1 = put_work(InteractionId, W#work{phase = active}, Data),
+                    publish_i(Data1, W, InteractionId, interaction_resumed, #{}),
                     {keep_state, Data1, [{reply, From, ok}]};
                 {error, conflict} ->
                     {keep_state_and_data, [{reply, From, {error, conflict}}]}
             end;
-        #{IId := _} ->
+        #{InteractionId := _} ->
             {keep_state_and_data, [{reply, From, {error, not_held}}]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
     end;
 %% ---- completion and after-call work ----
 
-handle_event({call, From}, {complete, IId}, _State, Data) ->
+handle_event({call, From}, {complete, InteractionId}, _State, Data) ->
     case Data#agent_session.work of
-        #{IId := W = #work{phase = Phase}} when Phase =:= active; Phase =:= held ->
+        #{InteractionId := W = #work{phase = Phase}} when Phase =:= active; Phase =:= held ->
             Now = cx_time:now_ms(),
             {WrapupMs, QRequired} = wrapup_policy(W#work.queue_key),
             case WrapupMs > 0 of
                 true ->
                     Until = Now + WrapupMs,
                     case
-                        set_state(Data, IId, Phase, wrapup, #{
+                        set_state(Data, InteractionId, Phase, wrapup, #{
                             wrapup_started_at => Now,
                             wrapup_until => Until
                         })
@@ -269,8 +272,8 @@ handle_event({call, From}, {complete, IId}, _State, Data) ->
                                 wrapup_until = Until,
                                 qualification_required = QRequired
                             },
-                            Data1 = put_work(IId, W1, Data),
-                            publish_i(Data1, W1, IId, wrapup_started, #{
+                            Data1 = put_work(InteractionId, W1, Data),
+                            publish_i(Data1, W1, InteractionId, wrapup_started, #{
                                 <<"until">> => Until
                             }),
                             {keep_state, Data1, [
@@ -279,27 +282,27 @@ handle_event({call, From}, {complete, IId}, _State, Data) ->
                                         <<"state">> => <<"wrapup">>,
                                         <<"wrapup_until">> => Until
                                     }}},
-                                {{timeout, {wrapup, IId}}, Until - Now, expire}
+                                {{timeout, {wrapup, InteractionId}}, Until - Now, expire}
                             ]};
                         {error, conflict} ->
                             {keep_state_and_data, [{reply, From, {error, conflict}}]}
                     end;
                 false ->
-                    case finalize(Data, IId, W, undefined) of
+                    case finalize(Data, InteractionId, W, undefined) of
                         {ok, Data1} ->
                             {keep_state, Data1, [{reply, From, ok}]};
                         {error, conflict} ->
                             {keep_state_and_data, [{reply, From, {error, conflict}}]}
                     end
             end;
-        #{IId := _} ->
+        #{InteractionId := _} ->
             {keep_state_and_data, [{reply, From, {error, not_active}}]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
     end;
-handle_event({call, From}, {extend_wrapup, IId, Ms}, _State, Data) ->
+handle_event({call, From}, {extend_wrapup, InteractionId, Ms}, _State, Data) ->
     case Data#agent_session.work of
-        #{IId := W = #work{phase = wrapup, wrapup_until = Until0}} when
+        #{InteractionId := W = #work{phase = wrapup, wrapup_until = Until0}} when
             is_integer(Until0)
         ->
             Now = cx_time:now_ms(),
@@ -307,16 +310,16 @@ handle_event({call, From}, {extend_wrapup, IId, Ms}, _State, Data) ->
             Until = Until0 + Ms,
             case within_wrapup_cap(W#work.queue_key, StartedAt, Until) of
                 true ->
-                    case set_state(Data, IId, wrapup, wrapup, #{wrapup_until => Until}) of
+                    case set_state(Data, InteractionId, wrapup, wrapup, #{wrapup_until => Until}) of
                         ok ->
                             W1 = W#work{wrapup_until = Until},
-                            Data1 = put_work(IId, W1, Data),
-                            publish_i(Data1, W1, IId, wrapup_extended, #{
+                            Data1 = put_work(InteractionId, W1, Data),
+                            publish_i(Data1, W1, InteractionId, wrapup_extended, #{
                                 <<"until">> => Until
                             }),
                             {keep_state, Data1, [
                                 {reply, From, ok},
-                                {{timeout, {wrapup, IId}}, Until - Now, expire}
+                                {{timeout, {wrapup, InteractionId}}, Until - Now, expire}
                             ]};
                         {error, conflict} ->
                             {keep_state_and_data, [{reply, From, {error, conflict}}]}
@@ -324,40 +327,40 @@ handle_event({call, From}, {extend_wrapup, IId, Ms}, _State, Data) ->
                 false ->
                     {keep_state_and_data, [{reply, From, {error, wrapup_cap_exceeded}}]}
             end;
-        #{IId := _} ->
+        #{InteractionId := _} ->
             {keep_state_and_data, [{reply, From, {error, not_in_wrapup}}]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
     end;
-handle_event({call, From}, {finalize_wrapup, IId}, _State, Data) ->
+handle_event({call, From}, {finalize_wrapup, InteractionId}, _State, Data) ->
     case Data#agent_session.work of
-        #{IId := #work{phase = wrapup, qualification_required = true, qualified = false}} ->
+        #{InteractionId := #work{phase = wrapup, qualification_required = true, qualified = false}} ->
             {keep_state_and_data, [{reply, From, {error, qualification_required}}]};
-        #{IId := W = #work{phase = wrapup}} ->
-            case finalize(Data, IId, W, wrapup_cancelled) of
+        #{InteractionId := W = #work{phase = wrapup}} ->
+            case finalize(Data, InteractionId, W, wrapup_cancelled) of
                 {ok, Data1} ->
                     {keep_state, Data1, [
                         {reply, From, ok},
-                        {{timeout, {wrapup, IId}}, cancel}
+                        {{timeout, {wrapup, InteractionId}}, cancel}
                     ]};
                 {error, conflict} ->
                     {keep_state_and_data, [{reply, From, {error, conflict}}]}
             end;
-        #{IId := _} ->
+        #{InteractionId := _} ->
             {keep_state_and_data, [{reply, From, {error, not_in_wrapup}}]};
         _ ->
             {keep_state_and_data, [{reply, From, {error, not_found}}]}
     end;
-handle_event({timeout, {wrapup, IId}}, expire, _State, Data) ->
+handle_event({timeout, {wrapup, InteractionId}}, expire, _State, Data) ->
     case Data#agent_session.work of
-        #{IId := #work{phase = wrapup, qualification_required = true, qualified = false}} ->
+        #{InteractionId := #work{phase = wrapup, qualification_required = true, qualified = false}} ->
             %% the hard block: an unqualified interaction on a
             %% qualification-required queue stays in ACW past its timer,
             %% holding the capacity slot — entering codes releases it
             %% (see the qualify handler)
             keep_state_and_data;
-        #{IId := W = #work{phase = wrapup}} ->
-            case finalize(Data, IId, W, wrapup_ended) of
+        #{InteractionId := W = #work{phase = wrapup}} ->
+            case finalize(Data, InteractionId, W, wrapup_ended) of
                 {ok, Data1} -> {keep_state, Data1};
                 {error, conflict} -> keep_state_and_data
             end;
@@ -366,17 +369,17 @@ handle_event({timeout, {wrapup, IId}}, expire, _State, Data) ->
     end;
 %% ---- qualification ----
 
-handle_event({call, From}, {qualify, IId, Ids}, _State, Data) ->
+handle_event({call, From}, {qualify, InteractionId, Ids}, _State, Data) ->
     case Data#agent_session.work of
-        #{IId := W = #work{phase = Phase}} ->
-            case set_state(Data, IId, Phase, Phase, #{qualification_ids => Ids}) of
+        #{InteractionId := W = #work{phase = Phase}} ->
+            case set_state(Data, InteractionId, Phase, Phase, #{qualification_ids => Ids}) of
                 ok ->
                     W1 = W#work{qualified = Ids =/= []},
-                    Data1 = put_work(IId, W1, Data),
-                    publish_i(Data1, W1, IId, interaction_qualified, #{
+                    Data1 = put_work(InteractionId, W1, Data),
+                    publish_i(Data1, W1, InteractionId, interaction_qualified, #{
                         <<"qualification_ids">> => Ids
                     }),
-                    maybe_release_overdue(Data1, IId, W1, From);
+                    maybe_release_overdue(Data1, InteractionId, W1, From);
                 {error, conflict} ->
                     {keep_state_and_data, [{reply, From, {error, conflict}}]}
             end;
@@ -387,7 +390,7 @@ handle_event({call, From}, {qualify, IId, Ids}, _State, Data) ->
 
 handle_event({call, From}, get_state, _State, Data) ->
     ByPhase = fun(Phase) ->
-        [IId || IId := #work{phase = P} <- Data#agent_session.work, P =:= Phase]
+        [InteractionId || InteractionId := #work{phase = P} <- Data#agent_session.work, P =:= Phase]
     end,
     Offers = [
         offer_to_map(OfferId, O)
@@ -409,13 +412,13 @@ handle_event({call, From}, list_work, _State, Data) ->
     {keep_state_and_data, [{reply, From, {ok, maps:keys(Data#agent_session.work)}}]};
 handle_event({call, From}, stop_session, _State, Data) ->
     Engaged = [
-        IId
-     || IId := #work{phase = P} <- Data#agent_session.work,
+        InteractionId
+     || InteractionId := #work{phase = P} <- Data#agent_session.work,
         P =:= active orelse P =:= held
     ],
     Unqualified = [
-        IId
-     || IId := #work{phase = wrapup, qualification_required = true, qualified = false} <-
+        InteractionId
+     || InteractionId := #work{phase = wrapup, qualification_required = true, qualified = false} <-
             Data#agent_session.work
     ],
     case {Engaged, Unqualified} of
@@ -429,10 +432,10 @@ handle_event({call, From}, stop_session, _State, Data) ->
             %% pending offers back (the queue requeues at original
             %% position and we're gone before its cast comes back)
             Data1 = maps:fold(
-                fun(IId, W, Acc) ->
-                    case finalize(Acc, IId, W, wrapup_cancelled) of
+                fun(InteractionId, W, Acc) ->
+                    case finalize(Acc, InteractionId, W, wrapup_cancelled) of
                         {ok, Acc1} -> Acc1;
-                        {error, conflict} -> remove_work(IId, Acc)
+                        {error, conflict} -> remove_work(InteractionId, Acc)
                     end
                 end,
                 Data,
@@ -454,22 +457,22 @@ handle_event({call, From}, force_stop_session, _State, Data) ->
     %% work goes back to its queue at original position, ACW finalizes
     %% regardless of qualification, pending offers are handed back.
     Data1 = maps:fold(
-        fun(IId, W = #work{phase = Phase}, Acc) ->
+        fun(InteractionId, W = #work{phase = Phase}, Acc) ->
             case Phase of
                 wrapup ->
-                    case finalize(Acc, IId, W, wrapup_cancelled) of
+                    case finalize(Acc, InteractionId, W, wrapup_cancelled) of
                         {ok, Acc1} -> Acc1;
-                        {error, conflict} -> remove_work(IId, Acc)
+                        {error, conflict} -> remove_work(InteractionId, Acc)
                     end;
                 _ ->
                     {_, QueueId} = W#work.queue_key,
                     case cx_queue_process:ensure_started(Acc#agent_session.tenant, QueueId) of
-                        {ok, QPid} ->
-                            gen_statem:cast(QPid, {requeue_active, IId});
+                        {ok, QueuePid} ->
+                            gen_statem:cast(QueuePid, {requeue_active, InteractionId});
                         {error, _} ->
                             ok
                     end,
-                    remove_work(IId, Acc)
+                    remove_work(InteractionId, Acc)
             end
         end,
         Data,
@@ -526,13 +529,15 @@ touch_idle(Data = #agent_session{work = Work, pending = Pending}) ->
         _ -> Data
     end.
 
-put_work(IId, W, Data) ->
-    Data1 = Data#agent_session{work = maps:put(IId, W, Data#agent_session.work)},
+put_work(InteractionId, W, Data) ->
+    Data1 = Data#agent_session{work = maps:put(InteractionId, W, Data#agent_session.work)},
     write_snapshot(Data1),
     Data1.
 
-remove_work(IId, Data) ->
-    Data1 = touch_idle(Data#agent_session{work = maps:remove(IId, Data#agent_session.work)}),
+remove_work(InteractionId, Data) ->
+    Data1 = touch_idle(Data#agent_session{
+        work = maps:remove(InteractionId, Data#agent_session.work)
+    }),
     write_snapshot(Data1),
     Data1.
 
@@ -553,17 +558,17 @@ write_snapshot(Data = #agent_session{tenant = Tenant, agent_id = AgentId}) ->
 %% expiry, wrapup_cancelled on early finalize, undefined when the queue
 %% has no wrap-up at all); interaction_completed marks the terminal
 %% transition in every case.
-finalize(Data, IId, W = #work{phase = Phase}, AcwEvent) ->
+finalize(Data, InteractionId, W = #work{phase = Phase}, AcwEvent) ->
     case
-        set_state(Data, IId, Phase, completed, #{
+        set_state(Data, InteractionId, Phase, completed, #{
             completed_at => cx_time:now_ms()
         })
     of
         ok ->
-            Data1 = remove_work(IId, Data),
+            Data1 = remove_work(InteractionId, Data),
             AcwEvent =/= undefined andalso
-                publish_i(Data1, W, IId, AcwEvent, #{}),
-            publish_i(Data1, W, IId, interaction_completed, #{}),
+                publish_i(Data1, W, InteractionId, AcwEvent, #{}),
+            publish_i(Data1, W, InteractionId, interaction_completed, #{}),
             cx_router_signal:agent_available(Data1#agent_session.tenant),
             {ok, Data1};
         {error, conflict} ->
@@ -574,9 +579,11 @@ finalize(Data, IId, W = #work{phase = Phase}, AcwEvent) ->
 %% must be in the state matching our phase or nothing is written — a
 %% racing cancel/delete must not be overwritten, and no event may narrate
 %% a transition that never happened.
-set_state(#agent_session{tenant = Tenant, agent_id = AgentId}, IId, FromState, ToState, Extra) ->
+set_state(
+    #agent_session{tenant = Tenant, agent_id = AgentId}, InteractionId, FromState, ToState, Extra
+) ->
     cx_store:tx(fun() ->
-        case mnesia:read(cx_interaction, {Tenant, IId}) of
+        case mnesia:read(cx_interaction, {Tenant, InteractionId}) of
             [Rec = #cx_interaction{state = FromState}] ->
                 mnesia:write(Rec#cx_interaction{
                     state = ToState,
@@ -611,13 +618,13 @@ wrapup_policy({Tenant, QueueId}) ->
 %% releases the moment codes arrive — entering them IS the release.
 maybe_release_overdue(
     Data,
-    IId,
+    InteractionId,
     W = #work{phase = wrapup, qualified = true, wrapup_until = Until},
     From
 ) when is_integer(Until) ->
     case Until =< cx_time:now_ms() of
         true ->
-            case finalize(Data, IId, W, wrapup_ended) of
+            case finalize(Data, InteractionId, W, wrapup_ended) of
                 {ok, Data1} -> {keep_state, Data1, [{reply, From, ok}]};
                 {error, conflict} -> {keep_state, Data, [{reply, From, ok}]}
             end;
@@ -638,14 +645,14 @@ within_wrapup_cap({Tenant, QueueId}, StartedAt, Until) ->
     end.
 
 offer_to_map(OfferId, #pending_offer{
-    interaction_id = IId,
+    interaction_id = InteractionId,
     media = Media,
     queue_key = {_, QueueId},
     expires_at = ExpiresAt
 }) ->
     #{
         <<"offer_id">> => OfferId,
-        <<"interaction_id">> => IId,
+        <<"interaction_id">> => InteractionId,
         <<"media_type">> => Media,
         <<"queue_id">> => QueueId,
         <<"expires_at">> => cx_json:undef_to_null(ExpiresAt)
@@ -664,14 +671,14 @@ ready_to_json({not_ready, Reason}) ->
         <<"reason_id">> => cx_json:undef_to_null(Reason)
     }.
 
-publish_i(Data, #work{media = Media, queue_key = {_, QueueId}}, IId, Type, Extra) ->
+publish_i(Data, #work{media = Media, queue_key = {_, QueueId}}, InteractionId, Type, Extra) ->
     publish(
         Data,
         QueueId,
         Media,
         Type,
         Extra#{
-            <<"interaction_id">> => IId,
+            <<"interaction_id">> => InteractionId,
             <<"agent_id">> => Data#agent_session.agent_id
         }
     ).

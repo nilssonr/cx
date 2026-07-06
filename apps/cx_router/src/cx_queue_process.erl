@@ -134,12 +134,12 @@ next_sequence(Recs) -> lists:max([R#cx_interaction.sequence || R <- Recs]) + 1.
 
 %% ---- events ----
 
-handle_event({call, From}, {enqueue, IId, Media, Props, CreatedAt}, _S, Data) ->
+handle_event({call, From}, {enqueue, InteractionId, Media, Props, CreatedAt}, _S, Data) ->
     Config = refresh_config(Data),
     Now = cx_time:now_ms(),
     Sequence = Data#queue_state.sequence,
     Rec = #cx_interaction{
-        key = {Data#queue_state.tenant, IId},
+        key = {Data#queue_state.tenant, InteractionId},
         queue_key = {Data#queue_state.tenant, Data#queue_state.queue_id},
         media_type = Media,
         properties = Props,
@@ -150,23 +150,23 @@ handle_event({call, From}, {enqueue, IId, Media, Props, CreatedAt}, _S, Data) ->
     },
     ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
     Item = #waiting_item{
-        interaction_id = IId,
+        interaction_id = InteractionId,
         media = Media,
         skill_requirements = Config#cx_queue.skill_requirements,
         enqueued_at = Now,
         sequence = Sequence
     },
     Data1 = insert_item(Item, Data#queue_state{sequence = Sequence + 1, config = Config}),
-    publish(Data1, Media, interaction_queued, #{<<"interaction_id">> => IId}),
+    publish(Data1, Media, interaction_queued, #{<<"interaction_id">> => InteractionId}),
     {keep_state, Data1,
-        [{reply, From, {ok, IId}} | widen_actions(Item, Now)] ++
+        [{reply, From, {ok, InteractionId}} | widen_actions(Item, Now)] ++
             [{next_event, internal, route}]};
-handle_event({call, From}, {cancel, IId}, _S, Data) ->
-    case maps:take(IId, Data#queue_state.by_id) of
+handle_event({call, From}, {cancel, InteractionId}, _S, Data) ->
+    case maps:take(InteractionId, Data#queue_state.by_id) of
         {Key, ById} ->
             {Item, Waiting} = take_item(Key, Data#queue_state.waiting),
             ok = cx_store:tx(fun() ->
-                case mnesia:read(cx_interaction, {Data#queue_state.tenant, IId}) of
+                case mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}) of
                     [Rec = #cx_interaction{state = queued}] ->
                         mnesia:write(Rec#cx_interaction{state = cancelled});
                     _ ->
@@ -178,7 +178,7 @@ handle_event({call, From}, {cancel, IId}, _S, Data) ->
                 Data1,
                 Item#waiting_item.media,
                 interaction_cancelled,
-                #{<<"interaction_id">> => IId}
+                #{<<"interaction_id">> => InteractionId}
             ),
             {keep_state, Data1, [{reply, From, ok}]};
         error ->
@@ -188,9 +188,9 @@ handle_event({call, From}, {cancel, IId}, _S, Data) ->
 handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
     case take_offer(OfferId, Data) of
         {Offer = #placed_offer{item = Item}, Data0} ->
-            IId = Item#waiting_item.interaction_id,
+            InteractionId = Item#waiting_item.interaction_id,
             ok = cx_store:tx(fun() ->
-                [Rec] = mnesia:read(cx_interaction, {Data#queue_state.tenant, IId}),
+                [Rec] = mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}),
                 mnesia:write(Rec#cx_interaction{
                     state = active,
                     agent_id = Offer#placed_offer.agent_id,
@@ -203,7 +203,7 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
                 Item#waiting_item.media,
                 offer_accepted,
                 #{
-                    <<"interaction_id">> => IId,
+                    <<"interaction_id">> => InteractionId,
                     <<"offer_id">> => OfferId,
                     <<"agent_id">> => Offer#placed_offer.agent_id
                 }
@@ -212,7 +212,7 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
             %% a multi-capacity agent gets the next waiting item from a
             %% fresh pass
             {keep_state, Data0, [
-                {reply, From, {ok, IId}},
+                {reply, From, {ok, InteractionId}},
                 {{timeout, {offer, OfferId}}, cancel},
                 {next_event, internal, route}
             ]};
@@ -236,10 +236,10 @@ handle_event({call, From}, {rejected, OfferId}, _S, Data) ->
 %% re-enters the waiting order under its preserved {enqueued_at, sequence},
 %% so it never loses its place. The state guard makes a duplicate cast
 %% a no-op (first one flips the row to queued).
-handle_event(cast, {requeue_active, IId}, _S, Data) ->
+handle_event(cast, {requeue_active, InteractionId}, _S, Data) ->
     Config = refresh_config(Data),
     Requeued = cx_store:tx(fun() ->
-        case mnesia:read(cx_interaction, {Data#queue_state.tenant, IId}) of
+        case mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}) of
             [Rec = #cx_interaction{state = S}] when S =:= active; S =:= held ->
                 Rec1 = Rec#cx_interaction{
                     state = queued,
@@ -255,7 +255,7 @@ handle_event(cast, {requeue_active, IId}, _S, Data) ->
     case Requeued of
         {requeue, Rec, PrevAgent} ->
             Item = #waiting_item{
-                interaction_id = IId,
+                interaction_id = InteractionId,
                 media = Rec#cx_interaction.media_type,
                 skill_requirements = Config#cx_queue.skill_requirements,
                 enqueued_at = Rec#cx_interaction.enqueued_at,
@@ -267,7 +267,7 @@ handle_event(cast, {requeue_active, IId}, _S, Data) ->
                 Item#waiting_item.media,
                 interaction_requeued,
                 #{
-                    <<"interaction_id">> => IId,
+                    <<"interaction_id">> => InteractionId,
                     <<"agent_id">> => PrevAgent
                 }
             ),
@@ -385,7 +385,7 @@ offer_to_first([], _Item, Data, Offered) ->
 offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
     #{agent_id := AgentId, pid := AgentPid} = Snapshot,
     OfferId = cx_id:new(),
-    IId = Item#waiting_item.interaction_id,
+    InteractionId = Item#waiting_item.interaction_id,
     %% the ring deadline travels WITH the offer so countdown UIs need no
     %% queue-config knowledge; null = ring forever
     OfferTimeout = (Data#queue_state.config)#cx_queue.offer_timeout_ms,
@@ -396,7 +396,7 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
         end,
     Offer = #{
         offer_id => OfferId,
-        interaction_id => IId,
+        interaction_id => InteractionId,
         media => Item#waiting_item.media,
         queue_key => {Data#queue_state.tenant, Data#queue_state.queue_id},
         queue_pid => self(),
@@ -413,7 +413,7 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
         ok ->
             MonitorRef = erlang:monitor(process, AgentPid),
             ok = cx_store:tx(fun() ->
-                [Rec] = mnesia:read(cx_interaction, {Data#queue_state.tenant, IId}),
+                [Rec] = mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}),
                 mnesia:write(Rec#cx_interaction{state = offered})
             end),
             {_, Waiting} = take_item(
@@ -429,7 +429,7 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
             },
             Data1 = Data#queue_state{
                 waiting = Waiting,
-                by_id = maps:remove(IId, Data#queue_state.by_id),
+                by_id = maps:remove(InteractionId, Data#queue_state.by_id),
                 offers = maps:put(OfferId, PlacedOffer, Data#queue_state.offers)
             },
             publish(
@@ -437,7 +437,7 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
                 Item#waiting_item.media,
                 offer_created,
                 #{
-                    <<"interaction_id">> => IId,
+                    <<"interaction_id">> => InteractionId,
                     <<"offer_id">> => OfferId,
                     <<"agent_id">> => AgentId,
                     <<"expires_at">> => ExpiresAt
@@ -495,9 +495,9 @@ requeue(#placed_offer{item = Item, agent_id = AgentId}, Penalize, EventType, Dat
             true -> Item#waiting_item{offered_to = [AgentId | Item#waiting_item.offered_to]};
             false -> Item
         end,
-    IId = Item1#waiting_item.interaction_id,
+    InteractionId = Item1#waiting_item.interaction_id,
     ok = cx_store:tx(fun() ->
-        case mnesia:read(cx_interaction, {Data#queue_state.tenant, IId}) of
+        case mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}) of
             [Rec = #cx_interaction{state = offered}] ->
                 mnesia:write(Rec#cx_interaction{
                     state = queued,
@@ -512,13 +512,13 @@ requeue(#placed_offer{item = Item, agent_id = AgentId}, Penalize, EventType, Dat
         Data1,
         Item1#waiting_item.media,
         EventType,
-        #{<<"interaction_id">> => IId, <<"agent_id">> => AgentId}
+        #{<<"interaction_id">> => InteractionId, <<"agent_id">> => AgentId}
     ),
     Data1.
 
 widen_actions(
     #waiting_item{
-        interaction_id = IId,
+        interaction_id = InteractionId,
         skill_requirements = Reqs,
         enqueued_at = At
     },
@@ -532,7 +532,7 @@ widen_actions(
         AfterMs > Waited
     ]),
     [
-        {{timeout, {widen, IId, AfterMs}}, AfterMs - Waited, widen}
+        {{timeout, {widen, InteractionId, AfterMs}}, AfterMs - Waited, widen}
      || AfterMs <- Steps
     ].
 

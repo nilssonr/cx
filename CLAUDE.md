@@ -74,3 +74,24 @@ never releases.
 - There is no "auth disabled" mode and none may be added; tests mint real
   JWTs via `cx_auth_test` with a static key source.
 - Timestamps: `erlang:system_time(millisecond)`. IDs: `cx_id:new()`.
+
+## Naming
+
+- Identifiers spell the whole word (`session`, not `sess`; `handler`,
+  not `h`). An abbreviation survives only as (1) OTP/Erlang idiom
+  (`Pid`, `Ref`, `Acc`, `_sup`/`_app` suffixes, `Ms`/`_ms` millisecond
+  tags, `min_`/`max_`), (2) industry vocabulary stronger than its
+  expansion (`jwt`, `jwks`, `jose`, RFC-fixed claim names, `sms`,
+  `dnd`, `db`, `id`, `json`, `ws`, `authz`, `crud`), or (3) a
+  single-clause pattern binding where the pattern names the type
+  (`W = #work{...}` used a line later). Multi-line-scope variables
+  spell out.
+- Record names are unique across the whole umbrella even though Erlang
+  scopes them per module — identical names with different shapes in
+  different files is silent confusion. gen_statem data records are
+  named after the process they model (`#agent_session{}`,
+  `#presence_session{}`, `#queue_state{}`).
+- `#cx_*` on a record means exactly one thing: it is a persisted Mnesia
+  table and the record name IS the table name (table names are
+  node-global atoms, hence the prefix). In-memory value records stay
+  unprefixed (`#auth_context{}`, `#skill_requirement{}`).

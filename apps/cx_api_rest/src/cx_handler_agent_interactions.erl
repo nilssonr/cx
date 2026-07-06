@@ -21,33 +21,33 @@
 -export([init/2]).
 
 init(Req0, Opts = #{ctx := Ctx, op := Op}) ->
-    IId = cowboy_req:binding(interaction_id, Req0),
+    InteractionId = cowboy_req:binding(interaction_id, Req0),
     {Result, Req1} =
         case {cowboy_req:method(Req0), Op} of
             {<<"GET">>, list} ->
                 {cx_router:agent_interactions(Ctx), Req0};
             {<<"GET">>, get} ->
-                {cx_router:agent_interaction(Ctx, IId), Req0};
+                {cx_router:agent_interaction(Ctx, InteractionId), Req0};
             {<<"POST">>, complete} ->
-                {cx_router:complete(Ctx, IId), Req0};
+                {cx_router:complete(Ctx, InteractionId), Req0};
             {<<"POST">>, hold} ->
-                {cx_router:hold(Ctx, IId), Req0};
+                {cx_router:hold(Ctx, InteractionId), Req0};
             {<<"POST">>, resume} ->
-                {cx_router:resume(Ctx, IId), Req0};
+                {cx_router:resume(Ctx, InteractionId), Req0};
             {<<"PUT">>, qualifications} ->
                 cx_handler:with_body(Req0, fun(Params) ->
-                    cx_router:qualify(Ctx, IId, Params)
+                    cx_router:qualify(Ctx, InteractionId, Params)
                 end);
             {<<"POST">>, wrapup_extend} ->
                 cx_handler:with_body(Req0, fun(Params) ->
                     cx_router:extend_wrapup(
                         Ctx,
-                        IId,
+                        InteractionId,
                         maps:get(<<"extend_ms">>, Params, undefined)
                     )
                 end);
             {<<"POST">>, wrapup_finalize} ->
-                {cx_router:finalize_wrapup(Ctx, IId), Req0};
+                {cx_router:finalize_wrapup(Ctx, InteractionId), Req0};
             _ ->
                 {{error, method_not_allowed}, Req0}
         end,

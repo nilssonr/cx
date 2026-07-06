@@ -23,16 +23,16 @@
 %% Idempotent sign-in: the token identity IS the natural idempotency
 %% key (one session per {tenant, user}), so a retried POST returns the
 %% live session's state exactly like GET would.
-start_session(Ctx = #auth_context{tenant_id = T, user_id = UserId}) ->
+start_session(Ctx = #auth_context{tenant_id = TenantId, user_id = UserId}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
         ok ?= cx_authz:require_user(Ctx),
-        {ok, User} ?= cx_user:fetch(T, UserId),
+        {ok, User} ?= cx_user:fetch(TenantId, UserId),
         ok ?= active_user(User),
-        {ok, Profile} ?= load_profile(T, User#cx_user.routing_profile_id),
+        {ok, Profile} ?= load_profile(TenantId, User#cx_user.routing_profile_id),
         case
             cx_agent_session_sup:start_session(
-                T,
+                TenantId,
                 UserId,
                 User#cx_user.skills,
                 Profile
@@ -60,10 +60,10 @@ stop_session(Ctx = #auth_context{}, Force) ->
     end.
 
 %% Supervisor kick-out — a separate, deliberately grantable authority.
-force_stop_session(Ctx = #auth_context{tenant_id = T}, UserId) ->
+force_stop_session(Ctx = #auth_context{tenant_id = TenantId}, UserId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:any">>),
-        case cx_registry:whereis_name({agent, T, UserId}) of
+        case cx_registry:whereis_name({agent, TenantId, UserId}) of
             Pid when is_pid(Pid) -> call(Pid, force_stop_session);
             undefined -> ok
         end
@@ -78,11 +78,11 @@ get_session(Ctx = #auth_context{}) ->
 
 %% ---- readiness ----
 
-set_ready(Ctx = #auth_context{tenant_id = T}, Media, ReadyState) ->
+set_ready(Ctx = #auth_context{tenant_id = TenantId}, Media, ReadyState) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:ready:self">>),
         ok ?= valid_media(Media),
-        ok ?= validate_reason(T, ReadyState),
+        ok ?= validate_reason(TenantId, ReadyState),
         {ok, Pid} ?= session_of(Ctx),
         call(Pid, {set_ready, Media, ReadyState})
     end.
@@ -97,8 +97,8 @@ validate_reason(_T, ready) ->
     ok;
 validate_reason(_T, {not_ready, undefined}) ->
     ok;
-validate_reason(T, {not_ready, ReasonId}) ->
-    case cx_not_ready_reason:fetch(T, ReasonId) of
+validate_reason(TenantId, {not_ready, ReasonId}) ->
+    case cx_not_ready_reason:fetch(TenantId, ReasonId) of
         {ok, #cx_not_ready_reason{active = true}} -> ok;
         {ok, #cx_not_ready_reason{active = false}} -> {error, {invalid, <<"reason_id">>}};
         {error, not_found} -> {error, {invalid, <<"reason_id">>}}
@@ -106,33 +106,34 @@ validate_reason(T, {not_ready, ReasonId}) ->
 
 %% ---- interactions (Open Media rides on this directly) ----
 
-create_interaction(Ctx = #auth_context{tenant_id = T}, Params) ->
+create_interaction(Ctx = #auth_context{tenant_id = TenantId}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:create">>),
         {ok, QueueId} ?= cx_params:require_binary(Params, <<"queue_id">>),
         {ok, Media} ?= cx_params:require_binary(Params, <<"media_type">>),
         ok ?= valid_media(Media),
         {ok, Props} ?= validate_properties(Params),
-        {ok, Queue} ?= cx_queue:fetch(T, QueueId),
+        {ok, Queue} ?= cx_queue:fetch(TenantId, QueueId),
         ok ?= open_queue(Queue),
-        {ok, QPid} ?= cx_queue_process:ensure_started(T, QueueId),
-        {ok, IId} ?= call(QPid, {enqueue, cx_id:new(), Media, Props, cx_time:now_ms()}),
-        {ok, #{<<"id">> => IId}}
+        {ok, QueuePid} ?= cx_queue_process:ensure_started(TenantId, QueueId),
+        {ok, InteractionId} ?=
+            call(QueuePid, {enqueue, cx_id:new(), Media, Props, cx_time:now_ms()}),
+        {ok, #{<<"id">> => InteractionId}}
     end.
 
-cancel_interaction(Ctx = #auth_context{tenant_id = T}, IId) ->
+cancel_interaction(Ctx = #auth_context{tenant_id = TenantId}, InteractionId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:cancel">>),
-        {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
+        {ok, Rec} ?= cx_store:read(cx_interaction, {TenantId, InteractionId}),
         {_, QueueId} = Rec#cx_interaction.queue_key,
-        {ok, QPid} ?= cx_queue_process:ensure_started(T, QueueId),
-        call(QPid, {cancel, IId})
+        {ok, QueuePid} ?= cx_queue_process:ensure_started(TenantId, QueueId),
+        call(QueuePid, {cancel, InteractionId})
     end.
 
-get_interaction(Ctx = #auth_context{tenant_id = T}, IId) ->
+get_interaction(Ctx = #auth_context{tenant_id = TenantId}, InteractionId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:read">>),
-        {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
+        {ok, Rec} ?= cx_store:read(cx_interaction, {TenantId, InteractionId}),
         {ok, interaction_to_map(Rec)}
     end.
 
@@ -140,12 +141,12 @@ get_interaction(Ctx = #auth_context{tenant_id = T}, IId) ->
 %% query-string map; unknown keys are ignored, malformed values are 422.
 %% M1 scale note: this match-objects the tenant's interactions and
 %% filters/sorts in memory — revisit with a real index when volume says so.
-list_interactions(Ctx = #auth_context{tenant_id = T}, Filters) ->
+list_interactions(Ctx = #auth_context{tenant_id = TenantId}, Filters) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:read">>),
         {ok, Limit} ?= parse_limit(Filters),
         ok ?= valid_filters(Filters),
-        Recs = cx_store:dirty_list(cx_interaction, cx_patterns:interactions(T)),
+        Recs = cx_store:dirty_list(cx_interaction, cx_patterns:interactions(TenantId)),
         Matching = [R || R <- Recs, matches_filters(R, Filters)],
         Sorted = lists:sort(fun newest_first/2, Matching),
         Page = page_after(Sorted, maps:get(<<"after">>, Filters, undefined), Limit),
@@ -163,28 +164,28 @@ list_interactions(Ctx = #auth_context{tenant_id = T}, Filters) ->
 %% One owned interaction (any phase, wrap-up included) through the
 %% agent's eyes. After finalize it leaves this surface — integrators
 %% keep the tenant-wide GET.
-agent_interaction(Ctx = #auth_context{tenant_id = T}, IId) ->
+agent_interaction(Ctx = #auth_context{tenant_id = TenantId}, InteractionId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Pid} ?= session_of(Ctx),
         {ok, IIds} ?= call(Pid, list_work),
-        true ?= lists:member(IId, IIds) orelse {error, not_found},
-        {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
+        true ?= lists:member(InteractionId, IIds) orelse {error, not_found},
+        {ok, Rec} ?= cx_store:read(cx_interaction, {TenantId, InteractionId}),
         {ok, interaction_to_map(Rec)}
     end.
 
 %% The agent's own interactions in full detail — the rehydration surface
 %% a reconnecting client uses instead of replaying missed events.
-agent_interactions(Ctx = #auth_context{tenant_id = T}) ->
+agent_interactions(Ctx = #auth_context{tenant_id = TenantId}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Pid} ?= session_of(Ctx),
         {ok, IIds} ?= call(Pid, list_work),
         Recs = [
             Rec
-         || IId <- IIds,
+         || InteractionId <- IIds,
             Rec <- [
-                case cx_store:read(cx_interaction, {T, IId}) of
+                case cx_store:read(cx_interaction, {TenantId, InteractionId}) of
                     {ok, R} -> R;
                     {error, not_found} -> undefined
                 end
@@ -291,11 +292,11 @@ accept_offer(Ctx, OfferId) ->
         case call(Pid, {pending_queue, OfferId}) of
             {ok, QueuePid} ->
                 case call(QueuePid, {accepted, OfferId}) of
-                    {ok, IId} -> {ok, #{<<"interaction_id">> => IId}};
+                    {ok, InteractionId} -> {ok, #{<<"interaction_id">> => InteractionId}};
                     Error -> Error
                 end;
-            {recently_accepted, IId} ->
-                {ok, #{<<"interaction_id">> => IId}};
+            {recently_accepted, InteractionId} ->
+                {ok, #{<<"interaction_id">> => InteractionId}};
             Error ->
                 Error
         end
@@ -326,27 +327,27 @@ get_offer(Ctx, OfferId) ->
 
 %% Retried complete: the session no longer knows the interaction, but if
 %% the row says this agent already completed it, the desired state holds.
-complete(Ctx, IId) ->
-    case interaction_op(Ctx, <<"agent:interactions:self">>, {complete, IId}) of
-        {error, not_found} -> completed_by_me(Ctx, IId);
+complete(Ctx, InteractionId) ->
+    case interaction_op(Ctx, <<"agent:interactions:self">>, {complete, InteractionId}) of
+        {error, not_found} -> completed_by_me(Ctx, InteractionId);
         Result -> Result
     end.
 
-hold(Ctx, IId) ->
-    interaction_op(Ctx, <<"agent:interactions:self">>, {hold, IId}).
+hold(Ctx, InteractionId) ->
+    interaction_op(Ctx, <<"agent:interactions:self">>, {hold, InteractionId}).
 
-resume(Ctx, IId) ->
-    interaction_op(Ctx, <<"agent:interactions:self">>, {resume, IId}).
+resume(Ctx, InteractionId) ->
+    interaction_op(Ctx, <<"agent:interactions:self">>, {resume, InteractionId}).
 
 %% PUT-semantics: the given list REPLACES the interaction's codes ([]
 %% clears them). Any active node of the tenant's tree is selectable.
-qualify(Ctx = #auth_context{tenant_id = T}, IId, Params) ->
+qualify(Ctx = #auth_context{tenant_id = TenantId}, InteractionId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Ids} ?= parse_qualification_ids(Params),
-        ok ?= validate_qualifications(T, Ids),
+        ok ?= validate_qualifications(TenantId, Ids),
         {ok, Pid} ?= session_of(Ctx),
-        call(Pid, {qualify, IId, Ids})
+        call(Pid, {qualify, InteractionId, Ids})
     end.
 
 parse_qualification_ids(Params) ->
@@ -362,23 +363,23 @@ parse_qualification_ids(Params) ->
 
 validate_qualifications(_T, []) ->
     ok;
-validate_qualifications(T, [Id | Rest]) ->
-    case cx_qualification_code:fetch(T, Id) of
-        {ok, #cx_qualification_code{active = true}} -> validate_qualifications(T, Rest);
+validate_qualifications(TenantId, [Id | Rest]) ->
+    case cx_qualification_code:fetch(TenantId, Id) of
+        {ok, #cx_qualification_code{active = true}} -> validate_qualifications(TenantId, Rest);
         {ok, #cx_qualification_code{active = false}} -> {error, {invalid, <<"qualification_ids">>}};
         {error, not_found} -> {error, {invalid, <<"qualification_ids">>}}
     end.
 
 %% ---- after-call work (per interaction) ----
 
-extend_wrapup(Ctx, IId, ExtraMs) when is_integer(ExtraMs), ExtraMs > 0 ->
-    interaction_op(Ctx, <<"agent:wrapup:self">>, {extend_wrapup, IId, ExtraMs});
+extend_wrapup(Ctx, InteractionId, ExtraMs) when is_integer(ExtraMs), ExtraMs > 0 ->
+    interaction_op(Ctx, <<"agent:wrapup:self">>, {extend_wrapup, InteractionId, ExtraMs});
 extend_wrapup(_Ctx, _IId, _) ->
     {error, {invalid, <<"extend_ms">>}}.
 
-finalize_wrapup(Ctx, IId) ->
-    case interaction_op(Ctx, <<"agent:wrapup:self">>, {finalize_wrapup, IId}) of
-        {error, not_found} -> completed_by_me(Ctx, IId);
+finalize_wrapup(Ctx, InteractionId) ->
+    case interaction_op(Ctx, <<"agent:wrapup:self">>, {finalize_wrapup, InteractionId}) of
+        {error, not_found} -> completed_by_me(Ctx, InteractionId);
         Result -> Result
     end.
 
@@ -389,8 +390,8 @@ interaction_op(Ctx, Perm, Msg) ->
         call(Pid, Msg)
     end.
 
-completed_by_me(#auth_context{tenant_id = T, user_id = UserId}, IId) ->
-    case cx_store:read(cx_interaction, {T, IId}) of
+completed_by_me(#auth_context{tenant_id = TenantId, user_id = UserId}, InteractionId) ->
+    case cx_store:read(cx_interaction, {TenantId, InteractionId}) of
         {ok, #cx_interaction{state = completed, agent_id = UserId}} when
             UserId =/= undefined
         ->
@@ -401,10 +402,10 @@ completed_by_me(#auth_context{tenant_id = T, user_id = UserId}, IId) ->
 
 %% ---- helpers ----
 
-session_of(#auth_context{tenant_id = T, user_id = UserId}) ->
+session_of(#auth_context{tenant_id = TenantId, user_id = UserId}) ->
     case
         UserId =/= undefined andalso
-            cx_registry:whereis_name({agent, T, UserId})
+            cx_registry:whereis_name({agent, TenantId, UserId})
     of
         Pid when is_pid(Pid) -> {ok, Pid};
         _ -> {error, no_session}
@@ -423,10 +424,10 @@ active_user(#cx_user{}) -> {error, forbidden}.
 load_profile(_T, undefined) ->
     %% no profile configured: nothing is limited (the superhuman default)
     {ok, #cx_routing_profile{key = {<<>>, <<>>}, name = <<"unlimited">>}};
-load_profile(T, ProfileId) ->
+load_profile(TenantId, ProfileId) ->
     %% a configured-but-missing profile fails CLOSED: refusing the session
     %% is recoverable, silently substituting unlimited capacity is not
-    case cx_routing_profile:fetch(T, ProfileId) of
+    case cx_routing_profile:fetch(TenantId, ProfileId) of
         {ok, Profile} -> {ok, Profile};
         {error, not_found} -> {error, profile_missing}
     end.
