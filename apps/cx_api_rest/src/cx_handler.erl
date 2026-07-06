@@ -34,7 +34,6 @@ status(in_use) -> 409;
 status(profile_missing) -> 409;
 status(not_cancellable) -> 409;
 status(expired) -> 409;
-status(already_started) -> 409;
 status(queue_closed) -> 409;
 status(has_active_interactions) -> 409;
 status(not_in_wrapup) -> 409;
