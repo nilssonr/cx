@@ -106,40 +106,64 @@ recover(Data = #queue_state{tenant = TenantId, queue_id = QueueId}) ->
             {TenantId, QueueId},
             #cx_interaction.queue_key
         ),
-        lists:foldr(
-            fun(Rec, {Keep, Events}) ->
-                case reconcile_row(TenantId, Rec) of
-                    {keep, Rec1, Event} -> {[Rec1 | Keep], Event ++ Events};
-                    {drop, Event} -> {Keep, Event ++ Events}
-                end
-            end,
-            {[], []},
-            Found
-        )
+        reconcile_rows(TenantId, Found)
     end),
+    publish_reconciled(Data, Reconciled),
+    adopt_reconciled(Recs, Data#queue_state{sequence = next_sequence(Recs)}).
+
+%% Fold reconcile_row over rows INSIDE a transaction, splitting kept
+%% (still-waiting) rows from the events narrating what was written.
+reconcile_rows(TenantId, Rows) ->
+    lists:foldr(
+        fun(Rec, {Keep, Events}) ->
+            case reconcile_row(TenantId, Rec) of
+                {keep, Rec1, Event} -> {[Rec1 | Keep], Event ++ Events};
+                {drop, Event} -> {Keep, Event ++ Events}
+            end
+        end,
+        {[], []},
+        Rows
+    ).
+
+%% Post-commit narration of reconciliation writes.
+publish_reconciled(Data, Reconciled) ->
     lists:foreach(
-        fun({Type, Media, PrevAgent, InteractionId}) ->
+        fun({Type, Media, PreviousAgentId, InteractionId}) ->
             publish(Data, Media, Type, #{
                 <<"interaction_id">> => InteractionId,
-                <<"agent_id">> => PrevAgent
+                <<"agent_id">> => PreviousAgentId
             })
         end,
         Reconciled
-    ),
+    ).
+
+%% Rebuild waiting items for kept rows not already tracked (insert_item
+%% crashes on duplicates; the guard is trivially false at recovery time
+%% and load-bearing for live reconciliation, mirroring adopt_queued).
+%% Never touches queue_state.sequence — assignment stays in recover/1,
+%% where the full row set is in hand; a live subset could regress it.
+adopt_reconciled(Recs, Data) ->
     Now = cx_time:now_ms(),
     lists:foldl(
         fun(Rec, {Acc, Actions}) ->
-            Item = #waiting_item{
-                interaction_id = element(2, Rec#cx_interaction.key),
-                media = Rec#cx_interaction.media_type,
-                skill_requirements = (Acc#queue_state.config)#cx_queue.skill_requirements,
-                enqueued_at = Rec#cx_interaction.enqueued_at,
-                sequence = Rec#cx_interaction.sequence
-            },
-            %% prepend: uniquely-named timeouts, order-free (see try_route)
-            {insert_item(Item, Acc), widen_actions(Item, Now) ++ Actions}
+            InteractionId = element(2, Rec#cx_interaction.key),
+            case is_map_key(InteractionId, Acc#queue_state.by_id) of
+                true ->
+                    {Acc, Actions};
+                false ->
+                    Item = #waiting_item{
+                        interaction_id = InteractionId,
+                        media = Rec#cx_interaction.media_type,
+                        skill_requirements =
+                            (Acc#queue_state.config)#cx_queue.skill_requirements,
+                        enqueued_at = Rec#cx_interaction.enqueued_at,
+                        sequence = Rec#cx_interaction.sequence
+                    },
+                    %% prepend: uniquely-named timeouts, order-free (see try_route)
+                    {insert_item(Item, Acc), widen_actions(Item, Now) ++ Actions}
+            end
         end,
-        {Data#queue_state{sequence = next_sequence(Recs)}, []},
+        {Data, []},
         Recs
     ).
 
