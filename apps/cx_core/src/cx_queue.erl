@@ -28,6 +28,7 @@ create(Ctx = #auth_context{tenant_id = T}, Params) ->
             opt_infinity_ms(Params, <<"offer_timeout_ms">>, ?DEFAULT_OFFER_TIMEOUT_MS),
         {ok, QualRequired} ?= opt_bool(Params, <<"qualification_required">>, false),
         {ok, Status} ?= cx_params:optional_atom(Params, <<"status">>, [open, closed], open),
+        ok ?= validate_wrapup_policy(WrapupMs, WrapupMaxMs, QualRequired),
         Rec = #cx_queue{
             key = {T, cx_id:new()},
             name = Name,
@@ -90,6 +91,7 @@ update(Ctx = #auth_context{tenant_id = T}, QueueId, Params) ->
                 [open, closed],
                 Rec0#cx_queue.status
             ),
+        ok ?= validate_wrapup_policy(WrapupMs, WrapupMaxMs, QualRequired),
         Rec = Rec0#cx_queue{
             name = Name,
             skill_requirements = SkillRequirements,
@@ -154,6 +156,19 @@ to_map(#cx_queue{
         <<"qualification_required">> => QualRequired,
         <<"status">> => atom_to_binary(Status)
     }.
+
+%% Cross-field rules, checked on the EFFECTIVE values in both create
+%% and update so no edit order can sneak an invalid combination in:
+%% mandatory qualification needs a wrap-up window to gate in, and the
+%% initial grant must not already exceed the total-ACW cap.
+validate_wrapup_policy(WrapupMs, _WrapupMaxMs, true) when WrapupMs =:= 0 ->
+    {error, {invalid, <<"qualification_required">>}};
+validate_wrapup_policy(WrapupMs, WrapupMaxMs, _QualRequired) when
+    WrapupMaxMs =/= infinity, WrapupMs > WrapupMaxMs
+->
+    {error, {invalid, <<"wrapup_duration_ms">>}};
+validate_wrapup_policy(_WrapupMs, _WrapupMaxMs, _QualRequired) ->
+    ok.
 
 opt_bool(Params, Key, Default) ->
     case Params of

@@ -20,6 +20,7 @@ entities_test_() ->
             fun skill_crud_and_level_validation/0,
             fun queue_crud_and_skill_req_parsing/0,
             fun queue_timeout_defaults_and_infinite_ring/0,
+            fun queue_wrapup_policy_validation/0,
             fun routing_profile_crud/0,
             fun not_ready_reason_crud/0,
             fun qualification_code_tree/0,
@@ -345,6 +346,58 @@ queue_timeout_defaults_and_infinite_ring() ->
             <<"name">> => <<"patience">>,
             <<"offer_timeout_ms">> => 0
         }),
+    ok = cx_queue:delete(Ctx, Id).
+
+%% Cross-field wrap-up rules hold on create AND update, on the
+%% effective (post-merge) values: mandatory qualification needs a
+%% non-zero window to gate in, and the initial grant cannot exceed the
+%% total-ACW cap (0 on the wire = uncapped).
+queue_wrapup_policy_validation() ->
+    T = cx_id:new(),
+    Ctx = admin(T),
+    ?assertEqual(
+        {error, {invalid, <<"qualification_required">>}},
+        cx_queue:create(Ctx, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 0,
+            <<"qualification_required">> => true
+        })
+    ),
+    ?assertEqual(
+        {error, {invalid, <<"wrapup_duration_ms">>}},
+        cx_queue:create(Ctx, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 600000,
+            <<"wrapup_max_ms">> => 30000
+        })
+    ),
+    %% uncapped ACW admits any duration
+    {ok, #{<<"id">> := Id}} =
+        cx_queue:create(Ctx, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 600000,
+            <<"wrapup_max_ms">> => 0,
+            <<"qualification_required">> => true
+        }),
+    %% an update flipping ONE side of a valid config is caught on the
+    %% merged result
+    ?assertEqual(
+        {error, {invalid, <<"qualification_required">>}},
+        cx_queue:update(Ctx, Id, #{<<"wrapup_duration_ms">> => 0})
+    ),
+    ?assertEqual(
+        {error, {invalid, <<"wrapup_duration_ms">>}},
+        cx_queue:update(Ctx, Id, #{<<"wrapup_max_ms">> => 30000})
+    ),
+    {ok, #{<<"qualification_required">> := false, <<"wrapup_duration_ms">> := 0}} =
+        cx_queue:update(Ctx, Id, #{
+            <<"qualification_required">> => false,
+            <<"wrapup_duration_ms">> => 0
+        }),
+    ?assertEqual(
+        {error, {invalid, <<"qualification_required">>}},
+        cx_queue:update(Ctx, Id, #{<<"qualification_required">> => true})
+    ),
     ok = cx_queue:delete(Ctx, Id).
 
 routing_profile_crud() ->
