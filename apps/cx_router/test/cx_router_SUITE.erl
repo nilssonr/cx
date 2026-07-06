@@ -32,6 +32,7 @@
     requeue_clears_prior_engagement_fields/1,
     queue_recover_reconciles_stranded_engaged/1,
     queue_recover_completes_stranded_wrapup/1,
+    sign_out_returns_offer_unpenalized/1,
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
@@ -67,6 +68,7 @@ all() ->
         requeue_clears_prior_engagement_fields,
         queue_recover_reconciles_stranded_engaged,
         queue_recover_completes_stranded_wrapup,
+        sign_out_returns_offer_unpenalized,
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
@@ -1316,6 +1318,39 @@ queue_recover_completes_stranded_wrapup(_Config) ->
         cx_router:get_interaction(Integrator, I1),
     ok.
 
+%% Signing out mid-ring must not blacklist the agent: the handback is
+%% unpenalized (offered_to entries never expire), so the same agent
+%% signing back in is served the same interaction again.
+sign_out_returns_offer_unpenalized(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(offer_created),
+    ok = cx_router:stop_session(AgentA),
+    {ok, _} = wait_event(session_ended),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_requeued),
+
+    AgentA1 = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA1, Media, ready),
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserA}} =
+        wait_data(offer_created, 2000),
+    ok = cx_router:stop_session(AgentA1),
+    ok.
+
 %% A configured-but-missing routing profile must refuse the session —
 %% never silently fall back to unlimited capacity. The dangler is forged
 %% with a direct Mnesia write because the API layer now prevents it.
@@ -1389,7 +1424,8 @@ reject_releases_monitor(_Config) ->
     _ = sys:get_state(QueuePid),
     ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),
     ok = cx_router:stop_session(AgentB),
-    {ok, _} = wait_event(offer_rejected),
+    %% no fabricated rejection: the handback narrates a requeue
+    {ok, _} = wait_event(interaction_requeued),
     _ = sys:get_state(QueuePid),
     ?assertEqual({monitors, []}, erlang:process_info(QueuePid, monitors)),
     ok.

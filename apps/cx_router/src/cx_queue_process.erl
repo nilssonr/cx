@@ -341,10 +341,12 @@ handle_event(cast, {adopt_queued, InteractionId}, _S, Data) ->
             keep_state_and_data
     end;
 %% a stopping agent session hands its pending offers back asynchronously
+%% — without penalizing the agent (they never acted on the offer, same
+%% reasoning as the 'DOWN' path) and without fabricating a rejection
 handle_event(cast, {reject_cast, OfferId}, _S, Data) ->
     case take_offer(OfferId, Data) of
         {Offer, Data0} ->
-            Data1 = requeue(Offer, true, offer_rejected, Data0),
+            Data1 = requeue(Offer, false, interaction_requeued, Data0),
             {keep_state, Data1, [
                 {{timeout, {offer, OfferId}}, cancel},
                 {next_event, internal, route}
