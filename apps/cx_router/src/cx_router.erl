@@ -109,8 +109,8 @@ validate_reason(T, {not_ready, ReasonId}) ->
 create_interaction(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:create">>),
-        {ok, QueueId} ?= cx_params:require_bin(Params, <<"queue_id">>),
-        {ok, Media} ?= cx_params:require_bin(Params, <<"media_type">>),
+        {ok, QueueId} ?= cx_params:require_binary(Params, <<"queue_id">>),
+        {ok, Media} ?= cx_params:require_binary(Params, <<"media_type">>),
         ok ?= valid_media(Media),
         {ok, Props} ?= validate_properties(Params),
         {ok, Queue} ?= cx_queue:fetch(T, QueueId),
@@ -435,7 +435,7 @@ open_queue(#cx_queue{status = open}) -> ok;
 open_queue(#cx_queue{}) -> {error, queue_closed}.
 
 validate_properties(Params) ->
-    case cx_params:opt_map(Params, <<"properties">>, #{}) of
+    case cx_params:optional_map(Params, <<"properties">>, #{}) of
         {ok, Props} ->
             Valid = lists:all(
                 fun({K, V}) -> is_binary(K) andalso is_binary(V) end,

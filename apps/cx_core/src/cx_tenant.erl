@@ -10,8 +10,8 @@
 create(Ctx, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
-        {ok, Id} ?= cx_params:opt_bin(Params, <<"id">>, cx_id:new()),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
+        {ok, Id} ?= cx_params:optional_binary(Params, <<"id">>, cx_id:new()),
         Now = cx_time:now_ms(),
         Rec = #cx_tenant{
             id = Id,
@@ -51,9 +51,9 @@ update(Ctx, TenantId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"tenants:admin">>),
         {ok, Rec0} ?= cx_store:read(cx_tenant, TenantId),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_tenant.name),
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_tenant.name),
         {ok, Status} ?=
-            cx_params:opt_atom(
+            cx_params:optional_atom(
                 Params,
                 <<"status">>,
                 [active, suspended],

@@ -8,12 +8,12 @@
 create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"users:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
-        {ok, Email} ?= cx_params:require_bin(Params, <<"email">>),
-        {ok, Subject} ?= cx_params:opt_bin(Params, <<"subject">>, undefined),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
+        {ok, Email} ?= cx_params:require_binary(Params, <<"email">>),
+        {ok, Subject} ?= cx_params:optional_binary(Params, <<"subject">>, undefined),
         {ok, RoleIds} ?= opt_bin_list(Params, <<"role_ids">>),
         {ok, Skills} ?= opt_skills(Params),
-        {ok, ProfileId} ?= cx_params:opt_bin(Params, <<"routing_profile_id">>, undefined),
+        {ok, ProfileId} ?= cx_params:optional_binary(Params, <<"routing_profile_id">>, undefined),
         Now = cx_time:now_ms(),
         Rec = #cx_user{
             key = {T, cx_id:new()},
@@ -50,19 +50,19 @@ update(Ctx = #auth_context{tenant_id = T}, UserId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"users:write">>),
         {ok, Rec0} ?= cx_store:read(cx_user, {T, UserId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_user.name),
-        {ok, Email} ?= cx_params:opt_bin(Params, <<"email">>, Rec0#cx_user.email),
-        {ok, Subject} ?= cx_params:opt_bin(Params, <<"subject">>, Rec0#cx_user.subject),
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_user.name),
+        {ok, Email} ?= cx_params:optional_binary(Params, <<"email">>, Rec0#cx_user.email),
+        {ok, Subject} ?= cx_params:optional_binary(Params, <<"subject">>, Rec0#cx_user.subject),
         {ok, RoleIds} ?= opt_bin_list(Params, <<"role_ids">>, Rec0#cx_user.role_ids),
         {ok, Skills} ?= opt_skills(Params, Rec0#cx_user.skills),
         {ok, ProfileId} ?=
-            cx_params:opt_bin(
+            cx_params:optional_binary(
                 Params,
                 <<"routing_profile_id">>,
                 Rec0#cx_user.routing_profile_id
             ),
         {ok, Status} ?=
-            cx_params:opt_atom(
+            cx_params:optional_atom(
                 Params,
                 <<"status">>,
                 [active, disabled],
@@ -150,7 +150,7 @@ opt_bin_list(Params, Key) ->
     opt_bin_list(Params, Key, []).
 
 opt_bin_list(Params, Key, Default) ->
-    case cx_params:opt_list(Params, Key, Default) of
+    case cx_params:optional_list(Params, Key, Default) of
         {ok, L} ->
             case lists:all(fun is_binary/1, L) of
                 true -> {ok, L};

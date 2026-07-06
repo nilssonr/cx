@@ -8,8 +8,8 @@
 create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"roles:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
-        {ok, Perms} ?= opt_perms(Params, []),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
+        {ok, Perms} ?= optional_permissions(Params, []),
         Rec = #cx_role{key = {T, cx_id:new()}, name = Name, permissions = Perms},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, element(2, Rec#cx_role.key), role_created),
@@ -32,8 +32,8 @@ update(Ctx = #auth_context{tenant_id = T}, RoleId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"roles:write">>),
         {ok, Rec0} ?= cx_store:read(cx_role, {T, RoleId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_role.name),
-        {ok, Perms} ?= opt_perms(Params, Rec0#cx_role.permissions),
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_role.name),
+        {ok, Perms} ?= optional_permissions(Params, Rec0#cx_role.permissions),
         Rec = Rec0#cx_role{name = Name, permissions = Perms},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, RoleId, role_updated),
@@ -77,8 +77,8 @@ to_map(#cx_role{key = {_, Id}, name = Name, permissions = Perms}) ->
 %% Only catalog permissions a tenant may grant itself pass — <<"*">>,
 %% tenants:admin and unknown strings are rejected, so a tenant admin
 %% with roles:write cannot escalate past their tenant.
-opt_perms(Params, Default) ->
-    case cx_params:opt_list(Params, <<"permissions">>, Default) of
+optional_permissions(Params, Default) ->
+    case cx_params:optional_list(Params, <<"permissions">>, Default) of
         {ok, L} ->
             case lists:all(fun cx_permission:is_tenant_assignable/1, L) of
                 true -> {ok, L};

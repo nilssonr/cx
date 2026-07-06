@@ -27,7 +27,7 @@ set_own(Ctx = #auth_context{tenant_id = T, user_id = UserId}, Params) ->
         ok ?= cx_authz:require(Ctx, <<"presence:set:self">>),
         ok ?= cx_authz:require_user(Ctx),
         {ok, Manual} ?= parse_state(Params),
-        {ok, Message} ?= cx_params:opt_bin(Params, <<"message">>, undefined),
+        {ok, Message} ?= cx_params:optional_binary(Params, <<"message">>, undefined),
         {ok, Until} ?= parse_until(Params, Manual, Message),
         Now = cx_time:now_ms(),
         OldRow = read_declaration(T, UserId),
@@ -149,7 +149,7 @@ read_declaration(T, UserId) ->
     end.
 
 parse_state(Params) ->
-    case cx_params:opt_bin(Params, <<"state">>, undefined) of
+    case cx_params:optional_binary(Params, <<"state">>, undefined) of
         {ok, undefined} ->
             {ok, undefined};
         {ok, <<"automatic">>} ->

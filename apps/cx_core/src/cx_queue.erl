@@ -14,11 +14,11 @@
 create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, SkillRequirements} ?=
             parse_skill_requirements(maps:get(<<"skill_requirements">>, Params, [])),
         {ok, WrapupMs} ?=
-            cx_params:opt_int(
+            cx_params:optional_integer(
                 Params,
                 <<"wrapup_duration_ms">>,
                 ?DEFAULT_WRAPUP_DURATION_MS
@@ -27,7 +27,7 @@ create(Ctx = #auth_context{tenant_id = T}, Params) ->
         {ok, OfferMs} ?=
             opt_infinity_ms(Params, <<"offer_timeout_ms">>, ?DEFAULT_OFFER_TIMEOUT_MS),
         {ok, QualRequired} ?= opt_bool(Params, <<"qualification_required">>, false),
-        {ok, Status} ?= cx_params:opt_atom(Params, <<"status">>, [open, closed], open),
+        {ok, Status} ?= cx_params:optional_atom(Params, <<"status">>, [open, closed], open),
         Rec = #cx_queue{
             key = {T, cx_id:new()},
             name = Name,
@@ -61,14 +61,14 @@ update(Ctx = #auth_context{tenant_id = T}, QueueId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
         {ok, Rec0} ?= cx_store:read(cx_queue, {T, QueueId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_queue.name),
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_queue.name),
         {ok, SkillRequirements} ?=
             case Params of
                 #{<<"skill_requirements">> := Raw} -> parse_skill_requirements(Raw);
                 _ -> {ok, Rec0#cx_queue.skill_requirements}
             end,
         {ok, WrapupMs} ?=
-            cx_params:opt_int(
+            cx_params:optional_integer(
                 Params,
                 <<"wrapup_duration_ms">>,
                 Rec0#cx_queue.wrapup_duration_ms
@@ -84,7 +84,7 @@ update(Ctx = #auth_context{tenant_id = T}, QueueId, Params) ->
                 Rec0#cx_queue.qualification_required
             ),
         {ok, Status} ?=
-            cx_params:opt_atom(
+            cx_params:optional_atom(
                 Params,
                 <<"status">>,
                 [open, closed],

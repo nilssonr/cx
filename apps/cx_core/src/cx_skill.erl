@@ -8,7 +8,7 @@
 create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"skills:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, Levels} ?= parse_levels(maps:get(<<"levels">>, Params, [])),
         Rec = #cx_skill{key = {T, cx_id:new()}, name = Name, levels = Levels},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
@@ -30,7 +30,7 @@ update(Ctx = #auth_context{tenant_id = T}, SkillId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"skills:write">>),
         {ok, Rec0} ?= cx_store:read(cx_skill, {T, SkillId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_skill.name),
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_skill.name),
         {ok, Levels} ?=
             case Params of
                 #{<<"levels">> := Raw} -> parse_levels(Raw);

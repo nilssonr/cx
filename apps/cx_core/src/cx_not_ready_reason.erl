@@ -8,7 +8,7 @@
 create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         Rec = #cx_not_ready_reason{key = {T, cx_id:new()}, name = Name, active = true},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
         publish(T, element(2, Rec#cx_not_ready_reason.key), not_ready_reason_created),
@@ -30,7 +30,7 @@ update(Ctx = #auth_context{tenant_id = T}, ReasonId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"not_ready_reasons:write">>),
         {ok, Rec0} ?= cx_store:read(cx_not_ready_reason, {T, ReasonId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_not_ready_reason.name),
+        {ok, Name} ?= cx_params:optional_binary(Params, <<"name">>, Rec0#cx_not_ready_reason.name),
         {ok, Active} ?= parse_active(Params, Rec0#cx_not_ready_reason.active),
         Rec = Rec0#cx_not_ready_reason{name = Name, active = Active},
         ok = cx_store:tx(fun() -> mnesia:write(Rec) end),

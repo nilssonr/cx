@@ -14,7 +14,7 @@
 create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"qualification_codes:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, ParentId} ?= parse_parent(Params, undefined),
         Rec = #cx_qualification_code{
             key = {T, cx_id:new()},
@@ -48,7 +48,8 @@ update(Ctx = #auth_context{tenant_id = T}, CodeId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"qualification_codes:write">>),
         {ok, Rec0} ?= cx_store:read(cx_qualification_code, {T, CodeId}),
-        {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_qualification_code.name),
+        {ok, Name} ?=
+            cx_params:optional_binary(Params, <<"name">>, Rec0#cx_qualification_code.name),
         {ok, ParentId} ?= parse_parent(Params, Rec0#cx_qualification_code.parent_id),
         {ok, Active} ?= parse_active(Params, Rec0#cx_qualification_code.active),
         Rec = Rec0#cx_qualification_code{

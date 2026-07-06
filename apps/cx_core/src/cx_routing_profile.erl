@@ -8,7 +8,7 @@
 create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
-        {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
+        {ok, Name} ?= cx_params:require_binary(Params, <<"name">>),
         {ok, MaxTotal} ?= parse_max_total(Params, unlimited),
         {ok, MediaCaps} ?= parse_media_capacities(Params, #{}),
         {ok, Guards} ?=
@@ -43,7 +43,7 @@ update(Ctx = #auth_context{tenant_id = T}, ProfileId, Params) ->
         ok ?= cx_authz:require(Ctx, <<"routing_profiles:write">>),
         {ok, Rec0} ?= cx_store:read(cx_routing_profile, {T, ProfileId}),
         {ok, Name} ?=
-            cx_params:opt_bin(
+            cx_params:optional_binary(
                 Params,
                 <<"name">>,
                 Rec0#cx_routing_profile.name
@@ -133,7 +133,7 @@ parse_max_total(Params, Default) ->
 %% guard referencing a nonexistent media type would be dead config that
 %% silently never fires, so it's rejected at write time instead.
 parse_media_capacities(Params, Default) ->
-    case cx_params:opt_map(Params, <<"media_capacities">>, Default) of
+    case cx_params:optional_map(Params, <<"media_capacities">>, Default) of
         {ok, Capacities} ->
             Valid = lists:all(
                 fun({K, V}) ->
