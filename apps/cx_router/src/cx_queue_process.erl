@@ -44,6 +44,11 @@
     waiting = gb_trees:empty() :: gb_trees:tree(),
     by_id = #{} :: #{binary() => {integer(), integer()}},
     offers = #{} :: #{binary() => #placed_offer{}},
+    %% one monitor per live agent pid that has ever accepted work from
+    %% this queue — held until that session's 'DOWN' (the queue is never
+    %% told about completion, so there is no earlier demonitor point);
+    %% pid => {monitor ref, agent id}
+    agent_monitors = #{} :: #{pid() => {reference(), binary()}},
     sequence = 0 :: integer()
 }).
 
@@ -95,10 +100,11 @@ init([TenantId, QueueId]) ->
 %% held forever is worse; this is the reconciliation-time equivalent of
 %% the supervisor override.
 %%
-%% Open gap: this runs only at queue start. An agent session dying
-%% abnormally while its queue stays up strands its engaged/ACW rows until
-%% the queue next restarts; healing that live needs per-agent post-accept
-%% monitors ('DOWN' → reconcile that agent's rows) — a stated follow-up.
+%% This runs only at queue start: it heals rows stranded while the queue
+%% itself was down. Rows stranded while the queue stays up are healed
+%% live — accept installs a per-agent monitor whose 'DOWN' reconciles
+%% that agent's rows (reconcile_dead_agent); both paths share
+%% reconcile_row.
 recover(Data = #queue_state{tenant = TenantId, queue_id = QueueId}) ->
     {Recs, Reconciled} = cx_store:tx(fun() ->
         Found = mnesia:index_read(
@@ -213,6 +219,36 @@ reconcile_row(_TenantId, _Rec) ->
     %% terminal states (completed | cancelled) stay untouched
     {drop, []}.
 
+%% A session holding accepted work from this queue died: heal that
+%% agent's engaged/ACW rows now. Idempotent by construction — the state
+%% filter runs inside the transaction, so a graceful sign-out's 'DOWN'
+%% (rows already requeued/finalized by the session before it stopped)
+%% and a racing adopt_queued both find nothing engaged. reconcile_row's
+%% own liveness check additionally protects rows a re-signed-in session
+%% for the same agent already owns; the microsecond window where that
+%% new session registers before this 'DOWN' is processed leaves the row
+%% to recover/1, exactly as before this handler existed.
+reconcile_dead_agent(AgentId, Data = #queue_state{tenant = TenantId, queue_id = QueueId}) ->
+    {Recs, Reconciled} = cx_store:tx(fun() ->
+        Found = [
+            Rec
+         || Rec = #cx_interaction{state = State, agent_id = RowAgentId} <-
+                mnesia:index_read(
+                    cx_interaction,
+                    {TenantId, QueueId},
+                    #cx_interaction.queue_key
+                ),
+            RowAgentId =:= AgentId,
+            State =:= active orelse State =:= held orelse State =:= wrapup
+        ],
+        reconcile_rows(TenantId, Found)
+    end),
+    publish_reconciled(Data, Reconciled),
+    {Data1, Actions} = adopt_reconciled(
+        Recs, Data#queue_state{config = refresh_config(Data)}
+    ),
+    {keep_state, Data1, Actions ++ [{next_event, internal, route}]}.
+
 %% Local registry lookup — single node today; when clustering arrives
 %% (syn), this helper is the one place session liveness changes.
 agent_session_alive(TenantId, AgentId) ->
@@ -278,6 +314,9 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
     case take_offer(OfferId, Data) of
         {Offer = #placed_offer{item = Item}, Data0} ->
             InteractionId = Item#waiting_item.interaction_id,
+            Data1 = monitor_accepting_agent(
+                Offer#placed_offer.agent_pid, Offer#placed_offer.agent_id, Data0
+            ),
             ok = cx_store:tx(fun() ->
                 [Rec] = mnesia:read(cx_interaction, {Data#queue_state.tenant, InteractionId}),
                 %% engagement starts from a clean slate: every writer
@@ -295,7 +334,7 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
             end),
             gen_statem:cast(Offer#placed_offer.agent_pid, {offer_accepted, OfferId}),
             publish(
-                Data0,
+                Data1,
                 Item#waiting_item.media,
                 offer_accepted,
                 #{
@@ -307,7 +346,7 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
             %% wake routing: each pass offers an agent at most once, so
             %% a multi-capacity agent gets the next waiting item from a
             %% fresh pass
-            {keep_state, Data0, [
+            {keep_state, Data1, [
                 {reply, From, {ok, InteractionId}},
                 {{timeout, {offer, OfferId}}, cancel},
                 {next_event, internal, route}
@@ -387,7 +426,7 @@ handle_event({timeout, {offer, OfferId}}, _Content, _S, Data) ->
         error ->
             keep_state_and_data
     end;
-handle_event(info, {'DOWN', MonitorRef, process, _Pid, _Reason}, _S, Data) ->
+handle_event(info, {'DOWN', MonitorRef, process, Pid, _Reason}, _S, Data) ->
     %% agent session died mid-offer: requeue at original position,
     %% without penalizing the agent (they never saw it resolve)
     case
@@ -410,7 +449,20 @@ handle_event(info, {'DOWN', MonitorRef, process, _Pid, _Reason}, _S, Data) ->
                 {next_event, internal, route}
             ]};
         [] ->
-            keep_state_and_data
+            %% post-accept per-agent monitor: reconcile that agent's
+            %% engaged/ACW rows live instead of at the next queue start.
+            %% The bound MonitorRef in the pattern IS the stale-ref
+            %% check — a pid hit under a different ref stays in the map
+            %% for its own 'DOWN'.
+            case maps:take(Pid, Data#queue_state.agent_monitors) of
+                {{MonitorRef, AgentId}, AgentMonitors} ->
+                    reconcile_dead_agent(
+                        AgentId,
+                        Data#queue_state{agent_monitors = AgentMonitors}
+                    );
+                _ ->
+                    keep_state_and_data
+            end
     end;
 handle_event({timeout, {widen, _InteractionId, _AfterMs}}, _Content, _S, _Data) ->
     %% pure wake-up; requirements are recomputed from wait time
@@ -557,7 +609,8 @@ stale_snapshot(TenantId, AgentId, DeadPid) ->
 %% Remove a live offer, always releasing its monitor — every resolution
 %% path (accept, reject, timeout) must demonitor or the queue leaks one
 %% monitor per resolved offer. The 'DOWN' handler is the one exception:
-%% its monitor already fired.
+%% its monitor already fired. The per-agent monitors in agent_monitors
+%% are separate and deliberately outlive the offer.
 take_offer(OfferId, Data) ->
     case maps:take(OfferId, Data#queue_state.offers) of
         {Offer, Offers} ->
@@ -565,6 +618,27 @@ take_offer(OfferId, Data) ->
             {Offer, Data#queue_state{offers = Offers}};
         error ->
             error
+    end.
+
+%% Post-accept liveness: one monitor per agent pid, added at first
+%% accept, deduped on later accepts (multi-capacity agents accept many
+%% items from one queue), released only by the session's 'DOWN'. If the
+%% session died between take_offer and here, monitoring the dead pid
+%% delivers an immediate noproc 'DOWN' — the just-written active row is
+%% reconciled right away instead of stranding.
+monitor_accepting_agent(AgentPid, AgentId, Data) ->
+    case is_map_key(AgentPid, Data#queue_state.agent_monitors) of
+        true ->
+            Data;
+        false ->
+            MonitorRef = erlang:monitor(process, AgentPid),
+            Data#queue_state{
+                agent_monitors = maps:put(
+                    AgentPid,
+                    {MonitorRef, AgentId},
+                    Data#queue_state.agent_monitors
+                )
+            }
     end.
 
 insert_item(Item = #waiting_item{enqueued_at = At, sequence = Sequence}, Data) ->

@@ -32,6 +32,10 @@
     requeue_clears_prior_engagement_fields/1,
     queue_recover_reconciles_stranded_engaged/1,
     queue_recover_completes_stranded_wrapup/1,
+    live_agent_crash_requeues_engaged/1,
+    live_agent_crash_completes_wrapup/1,
+    graceful_sign_out_down_reconciles_nothing/1,
+    accept_holds_agent_monitor_until_down/1,
     sign_out_returns_offer_unpenalized/1,
     list_pagination_cursor_stability/1,
     dangling_profile_fails_closed/1,
@@ -69,6 +73,10 @@ all() ->
         requeue_clears_prior_engagement_fields,
         queue_recover_reconciles_stranded_engaged,
         queue_recover_completes_stranded_wrapup,
+        live_agent_crash_requeues_engaged,
+        live_agent_crash_completes_wrapup,
+        graceful_sign_out_down_reconciles_nothing,
+        accept_holds_agent_monitor_until_down,
         sign_out_returns_offer_unpenalized,
         list_pagination_cursor_stability,
         dangling_profile_fails_closed,
@@ -1210,10 +1218,11 @@ requeue_clears_prior_engagement_fields(_Config) ->
     ok = cx_router:stop_session(AgentB),
     ok.
 
-%% A session crash leaves its active row stranded (the queue only
-%% monitors sessions mid-offer); the queue's recovery reconciles rows
-%% whose agent has no live session — engaged work returns to the
-%% backlog scrubbed, and gets served again.
+%% Recovery heals rows stranded while the queue itself was down: the
+%% session and queue die together, and the restarted queue reconciles
+%% rows whose agent has no live session — engaged work returns to the
+%% backlog scrubbed, and gets served again. (The live-queue path is
+%% covered by live_agent_crash_*.)
 queue_recover_reconciles_stranded_engaged(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
@@ -1318,6 +1327,236 @@ queue_recover_completes_stranded_wrapup(_Config) ->
         wait_data(interaction_completed, 2000),
     {ok, #{<<"state">> := <<"completed">>}} =
         cx_router:get_interaction(Integrator, I1),
+    ok.
+
+%% A session crash under a LIVE queue heals immediately: the per-agent
+%% monitor installed at accept fires 'DOWN' and the queue reconciles
+%% that agent's rows — no queue restart involved.
+live_agent_crash_requeues_engaged(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    %% held path coverage: the crash strands a held row
+    ok = cx_router:hold(AgentA, I1),
+    {ok, _} = wait_data(interaction_held),
+
+    QueuePid =
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            Q when is_pid(Q) -> Q
+        end,
+    SessionPid =
+        case cx_registry:whereis_name({agent, T, UserA}) of
+            P when is_pid(P) -> P
+        end,
+    exit(SessionPid, kill),
+
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserA}} =
+        wait_data(interaction_requeued, 2000),
+    %% healed by the LIVE queue, not a restart
+    ?assertEqual(QueuePid, cx_registry:whereis_name({queue, T, QueueId})),
+    {ok, #{
+        <<"state">> := <<"queued">>,
+        <<"agent_id">> := null,
+        <<"qualification_ids">> := []
+    }} = cx_router:get_interaction(Integrator, I1),
+
+    UserB = user(Admin, #{}, undefined),
+    AgentB = start_agent(T, UserB),
+    ok = cx_router:set_ready(AgentB, Media, ready),
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserB}} =
+        wait_data(offer_created, 2000),
+    ok.
+
+%% A session crash during ACW completes the wrap-up live — past the
+%% qualification gate, same reasoning as recovery: nobody can enter
+%% codes for a dead session.
+live_agent_crash_completes_wrapup(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 60000,
+        <<"qualification_required">> => true
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(AgentA, I1),
+    {ok, _} = wait_event(wrapup_started),
+
+    QueuePid =
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            Q when is_pid(Q) -> Q
+        end,
+    SessionPid =
+        case cx_registry:whereis_name({agent, T, UserA}) of
+            P when is_pid(P) -> P
+        end,
+    exit(SessionPid, kill),
+
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserA}} =
+        wait_data(interaction_completed, 2000),
+    ?assertEqual(QueuePid, cx_registry:whereis_name({queue, T, QueueId})),
+    {ok, #{<<"state">> := <<"completed">>}} =
+        cx_router:get_interaction(Integrator, I1),
+    ok.
+
+%% A graceful sign-out's 'DOWN' must not double-narrate: the session
+%% requeued/finalized its rows before stopping, so the per-agent
+%% monitor's reconciliation finds nothing.
+graceful_sign_out_down_reconciles_nothing(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    ok = cx_router:complete(AgentA, I1),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
+
+    QueuePid =
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            Q when is_pid(Q) -> Q
+        end,
+    ok = cx_router:stop_session(AgentA),
+    {ok, _} = wait_event(session_ended),
+    %% the accept-time monitor's 'DOWN' narrates nothing new
+    ?assertEqual(timeout, wait_event(interaction_completed, 300)),
+    ?assertEqual(timeout, wait_event(interaction_requeued, 300)),
+    ok = wait_until(fun() ->
+        erlang:process_info(QueuePid, monitors) =:= {monitors, []}
+    end),
+
+    %% force variant: engaged work is requeued by the SESSION exactly
+    %% once; the 'DOWN' adds nothing and the single re-offer proves no
+    %% double-insert
+    UserB = user(Admin, #{}, undefined),
+    AgentB = start_agent(T, UserB),
+    ok = cx_router:set_ready(AgentB, Media, ready),
+    {ok, #{<<"id">> := I2}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O2, <<"interaction_id">> := I2}} =
+        wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentB, O2),
+    ok = cx_router:stop_session(AgentB, true),
+    {ok, #{<<"interaction_id">> := I2}} = wait_data(interaction_requeued),
+    {ok, _} = wait_event(session_ended),
+    ?assertEqual(timeout, wait_event(interaction_requeued, 300)),
+
+    UserC = user(Admin, #{}, undefined),
+    AgentC = start_agent(T, UserC),
+    ok = cx_router:set_ready(AgentC, Media, ready),
+    {ok, #{<<"interaction_id">> := I2, <<"agent_id">> := UserC}} =
+        wait_data(offer_created, 2000),
+    ok.
+
+%% The queue holds exactly one monitor per accepting agent, from first
+%% accept until the session's 'DOWN': completion is invisible to the
+%% queue (no earlier release point), later accepts dedupe, and the
+%% per-offer monitors come and go independently.
+accept_holds_agent_monitor_until_down(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    QueuePid =
+        case cx_registry:whereis_name({queue, T, QueueId}) of
+            Q when is_pid(Q) -> Q
+        end,
+    _ = sys:get_state(QueuePid),
+    %% one ringing offer -> one (offer) monitor
+    ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),
+
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    _ = sys:get_state(QueuePid),
+    %% offer monitor released, agent monitor added — net one
+    ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),
+
+    ok = cx_router:complete(AgentA, I1),
+    {ok, _} = wait_data(interaction_completed),
+    _ = sys:get_state(QueuePid),
+    %% completion does not release it: held until the session's 'DOWN'
+    ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),
+
+    {ok, #{<<"id">> := I2}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O2, <<"interaction_id">> := I2}} =
+        wait_data(offer_created),
+    _ = sys:get_state(QueuePid),
+    %% agent monitor + new offer monitor
+    ?assertMatch({monitors, [_, _]}, erlang:process_info(QueuePid, monitors)),
+
+    {ok, _} = cx_router:accept_offer(AgentA, O2),
+    _ = sys:get_state(QueuePid),
+    %% offer released, agent monitor deduped — back to one
+    ?assertMatch({monitors, [_]}, erlang:process_info(QueuePid, monitors)),
+
+    ok = cx_router:complete(AgentA, I2),
+    {ok, _} = wait_data(interaction_completed),
+    ok = cx_router:stop_session(AgentA),
+    {ok, _} = wait_event(session_ended),
+    ok = wait_until(fun() ->
+        erlang:process_info(QueuePid, monitors) =:= {monitors, []}
+    end),
     ok.
 
 %% Signing out mid-ring must not blacklist the agent: the handback is
