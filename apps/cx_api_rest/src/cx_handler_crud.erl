@@ -9,9 +9,9 @@
 
 init(Req0, Opts = #{ctx := Ctx0, module := Mod}) ->
     {Result, Req1} =
-        case {cowboy_req:binding(tid, Req0), cowboy_req:binding(id, Req0)} of
-            {Tid, Id} when is_binary(Tid), is_binary(Id) orelse Id =:= undefined ->
-                case cx_handler:scope_tenant(Ctx0, Tid) of
+        case {cowboy_req:binding(tenant_id, Req0), cowboy_req:binding(id, Req0)} of
+            {TenantId, Id} when is_binary(TenantId), is_binary(Id) orelse Id =:= undefined ->
+                case cx_handler:scope_tenant(Ctx0, TenantId) of
                     {ok, Ctx} ->
                         dispatch(cowboy_req:method(Req0), Id, Mod, Ctx, Req0);
                     {error, forbidden} ->

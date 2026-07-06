@@ -5,7 +5,7 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"roles:write">>),
         {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
@@ -18,17 +18,17 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
 
 %% Reads need no specific permission: any authenticated tenant member may
 %% see role definitions (agents resolve their own permissions through them).
-get(#auth_ctx{tenant_id = T}, RoleId) ->
+get(#auth_context{tenant_id = T}, RoleId) ->
     maybe
         {ok, Rec} ?= cx_store:read(cx_role, {T, RoleId}),
         {ok, to_map(Rec)}
     end.
 
-list(#auth_ctx{tenant_id = T}) ->
+list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_role, cx_patterns:roles(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_ctx{tenant_id = T}, RoleId, Params) ->
+update(Ctx = #auth_context{tenant_id = T}, RoleId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"roles:write">>),
         {ok, Rec0} ?= cx_store:read(cx_role, {T, RoleId}),
@@ -42,7 +42,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, RoleId, Params) ->
 
 %% Deleting a role users reference is blocked (409) — a dangling role id
 %% would silently drop permissions at next token resolution.
-delete(Ctx = #auth_ctx{tenant_id = T}, RoleId) ->
+delete(Ctx = #auth_context{tenant_id = T}, RoleId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"roles:write">>),
         ok ?=

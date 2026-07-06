@@ -104,7 +104,7 @@ disconnect_publishes_offline_and_stops(_Config) ->
     ok = wait_until(fun() ->
         cx_registry:whereis_name({presence, T, UserId}) =:= undefined
     end),
-    ?assertEqual([], mnesia:dirty_read(cx_presence_eff, {T, UserId})),
+    ?assertEqual([], mnesia:dirty_read(cx_presence_effective, {T, UserId})),
     stop_conn(Conn),
     ok.
 
@@ -198,8 +198,8 @@ session_crash_reregister(_Config) ->
     ?assertNotEqual(SessPid, NewPid),
     {ok, #{<<"state">> := <<"online">>, <<"device_count">> := 1}} =
         cx_presence:get_own(Ctx),
-    [#cx_presence_eff{pid = NewPid}] =
-        mnesia:dirty_read(cx_presence_eff, {T, UserId}),
+    [#cx_presence_effective{pid = NewPid}] =
+        mnesia:dirty_read(cx_presence_effective, {T, UserId}),
     stop_conn(Conn),
     ok.
 

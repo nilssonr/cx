@@ -1,7 +1,7 @@
 -module(cx_presence).
 
 %% Domain facade for collaboration presence. Two surfaces:
-%%   - #auth_ctx{} functions for transports (set_own/get_own/directory)
+%%   - #auth_context{} functions for transports (set_own/get_own/directory)
 %%   - transport-internal connectivity signals (connected/disconnected/
 %%     activity), called by socket processes AFTER they authenticated;
 %%     callers must throttle activity reports (>= 30s client-side).
@@ -22,7 +22,7 @@
 
 %% ---- domain surface ----
 
-set_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, Params) ->
+set_own(Ctx = #auth_context{tenant_id = T, user_id = UserId}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"presence:set:self">>),
         ok ?= cx_authz:require_user(Ctx),
@@ -30,13 +30,13 @@ set_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, Params) ->
         {ok, Message} ?= cx_params:opt_bin(Params, <<"message">>, undefined),
         {ok, Until} ?= parse_until(Params, Manual, Message),
         Now = cx_time:now_ms(),
-        OldRow = read_decl(T, UserId),
+        OldRow = read_declaration(T, UserId),
         ok = cx_store:tx(fun() ->
             case {Manual, Message, Until} of
                 {undefined, undefined, undefined} ->
-                    mnesia:delete({cx_presence_decl, {T, UserId}});
+                    mnesia:delete({cx_presence_declaration, {T, UserId}});
                 _ ->
-                    mnesia:write(#cx_presence_decl{
+                    mnesia:write(#cx_presence_declaration{
                         key = {T, UserId},
                         manual_state = Manual,
                         message = Message,
@@ -49,7 +49,7 @@ set_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, Params) ->
         get_own(Ctx)
     end.
 
-get_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
+get_own(Ctx = #auth_context{tenant_id = T, user_id = UserId}) ->
     maybe
         ok ?= cx_authz:require_user(Ctx),
         {ok, own_map(T, UserId)}
@@ -57,15 +57,15 @@ get_own(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
 
 %% Any authenticated tenant member may read the directory (agents need
 %% their coworkers) — the not-ready-reason-read precedent.
-directory(#auth_ctx{tenant_id = T}) ->
+directory(#auth_context{tenant_id = T}) ->
     Now = cx_time:now_ms(),
-    Effs = live_effs(T),
+    Effs = live_effective(T),
     Decls = lists:foldl(
-        fun(R = #cx_presence_decl{key = {_, UserId}}, Acc) ->
+        fun(R = #cx_presence_declaration{key = {_, UserId}}, Acc) ->
             Acc#{UserId => R}
         end,
         #{},
-        cx_store:dirty_list(cx_presence_decl, cx_patterns:presence_decls(T))
+        cx_store:dirty_list(cx_presence_declaration, cx_patterns:presence_declarations(T))
     ),
     {ok, [
         directory_entry(U, Effs, Decls, Now)
@@ -74,8 +74,8 @@ directory(#auth_ctx{tenant_id = T}) ->
 
 %% ---- transport-internal connectivity signals ----
 
--spec connected(#auth_ctx{}, pid(), map()) -> {ok, pid()} | {error, term()}.
-connected(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, ConnPid, DeviceInfo) ->
+-spec connected(#auth_context{}, pid(), map()) -> {ok, pid()} | {error, term()}.
+connected(Ctx = #auth_context{tenant_id = T, user_id = UserId}, ConnPid, DeviceInfo) ->
     maybe
         ok ?= cx_authz:require_user(Ctx),
         {ok, #cx_user{status = active}} ?= fetch_active(T, UserId),
@@ -84,15 +84,15 @@ connected(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}, ConnPid, DeviceInfo)
         {error, Reason} -> {error, Reason}
     end.
 
--spec disconnected(#auth_ctx{}, pid()) -> ok.
-disconnected(#auth_ctx{tenant_id = T, user_id = UserId}, ConnPid) ->
+-spec disconnected(#auth_context{}, pid()) -> ok.
+disconnected(#auth_context{tenant_id = T, user_id = UserId}, ConnPid) ->
     case session_pid(T, UserId) of
         undefined -> ok;
         Pid -> gen_statem:cast(Pid, {disconnected, ConnPid})
     end.
 
--spec activity(#auth_ctx{}) -> ok.
-activity(#auth_ctx{tenant_id = T, user_id = UserId}) ->
+-spec activity(#auth_context{}) -> ok.
+activity(#auth_context{tenant_id = T, user_id = UserId}) ->
     case session_pid(T, UserId) of
         undefined -> ok;
         Pid -> gen_statem:cast(Pid, {activity, cx_time:now_ms()})
@@ -142,8 +142,8 @@ register_conn(T, U, ConnPid, DeviceInfo, Retries) ->
         exit:{shutdown, _} -> register_conn(T, U, ConnPid, DeviceInfo, Retries - 1)
     end.
 
-read_decl(T, UserId) ->
-    case mnesia:dirty_read(cx_presence_decl, {T, UserId}) of
+read_declaration(T, UserId) ->
+    case mnesia:dirty_read(cx_presence_declaration, {T, UserId}) of
         [Row] -> Row;
         [] -> undefined
     end.
@@ -185,7 +185,7 @@ propagate(T, UserId, OldRow, Now) ->
         undefined ->
             Threshold = away_threshold_ms(),
             OldEff = cx_presence_calculation:connectionless(OldRow, Now, Threshold),
-            NewRow = read_decl(T, UserId),
+            NewRow = read_declaration(T, UserId),
             NewEff = cx_presence_calculation:connectionless(NewRow, Now, Threshold),
             %% publish iff state/message changed — a pure `until` change
             %% is not a transition
@@ -214,7 +214,7 @@ propagate(T, UserId, OldRow, Now) ->
 
 own_map(T, UserId) ->
     Now = cx_time:now_ms(),
-    Row = read_decl(T, UserId),
+    Row = read_declaration(T, UserId),
     Norm = cx_presence_calculation:normalize(cx_presence_calculation:from_row(Row), Now),
     {State, Message, DeviceCount} = effective_now(T, UserId, Row, Now),
     #{
@@ -227,13 +227,13 @@ own_map(T, UserId) ->
     }.
 
 effective_now(T, UserId, Row, Now) ->
-    case mnesia:dirty_read(cx_presence_eff, {T, UserId}) of
-        [#cx_presence_eff{pid = Pid, state = S, message = M, device_count = D}] ->
+    case mnesia:dirty_read(cx_presence_effective, {T, UserId}) of
+        [#cx_presence_effective{pid = Pid, state = S, message = M, device_count = D}] ->
             case is_process_alive(Pid) of
                 true ->
                     {S, M, D};
                 false ->
-                    drop_stale_eff(T, UserId),
+                    drop_stale_effective(T, UserId),
                     lazy_effective(Row, Now)
             end;
         [] ->
@@ -246,25 +246,25 @@ lazy_effective(Row, Now) ->
     {S, M, 0}.
 
 %% Live eff rows only; dead-pid rows are dropped (stale-snapshot pattern).
-live_effs(T) ->
+live_effective(T) ->
     lists:foldl(
-        fun(Row = #cx_presence_eff{key = {_, UserId}, pid = Pid}, Acc) ->
+        fun(Row = #cx_presence_effective{key = {_, UserId}, pid = Pid}, Acc) ->
             case is_process_alive(Pid) of
                 true ->
                     Acc#{UserId => Row};
                 false ->
-                    drop_stale_eff(T, UserId),
+                    drop_stale_effective(T, UserId),
                     Acc
             end
         end,
         #{},
-        cx_store:dirty_list(cx_presence_eff, cx_patterns:presence_effs(T))
+        cx_store:dirty_list(cx_presence_effective, cx_patterns:presence_effective(T))
     ).
 
 directory_entry(#cx_user{key = {_, UserId}, name = Name}, Effs, Decls, Now) ->
     {State, Message, Until} =
         case Effs of
-            #{UserId := #cx_presence_eff{state = S, message = M, until = U}} ->
+            #{UserId := #cx_presence_effective{state = S, message = M, until = U}} ->
                 {S, M, U};
             _ ->
                 Row = maps:get(UserId, Decls, undefined),
@@ -281,13 +281,13 @@ directory_entry(#cx_user{key = {_, UserId}, name = Name}, Effs, Decls, Now) ->
     }.
 
 %% best-effort cleanup of an eff row whose owner died brutally
-drop_stale_eff(T, UserId) ->
+drop_stale_effective(T, UserId) ->
     try
-        mnesia:dirty_delete(cx_presence_eff, {T, UserId})
+        mnesia:dirty_delete(cx_presence_effective, {T, UserId})
     catch
         _:_ -> ok
     end,
     ok.
 
 decl_updated_at(undefined) -> null;
-decl_updated_at(#cx_presence_decl{updated_at = At}) -> At.
+decl_updated_at(#cx_presence_declaration{updated_at = At}) -> At.

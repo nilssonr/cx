@@ -22,8 +22,8 @@
     open_queues/0,
     interactions/1,
     agent_snapshots/1,
-    presence_decls/1,
-    presence_effs/1
+    presence_declarations/1,
+    presence_effective/1
 ]).
 
 tenants() -> #cx_tenant{_ = '_'}.
@@ -53,6 +53,6 @@ interactions(TenantId) -> #cx_interaction{key = {TenantId, '_'}, _ = '_'}.
 
 agent_snapshots(TenantId) -> #cx_agent_snapshot{key = {TenantId, '_'}, _ = '_'}.
 
-presence_decls(TenantId) -> #cx_presence_decl{key = {TenantId, '_'}, _ = '_'}.
+presence_declarations(TenantId) -> #cx_presence_declaration{key = {TenantId, '_'}, _ = '_'}.
 
-presence_effs(TenantId) -> #cx_presence_eff{key = {TenantId, '_'}, _ = '_'}.
+presence_effective(TenantId) -> #cx_presence_effective{key = {TenantId, '_'}, _ = '_'}.

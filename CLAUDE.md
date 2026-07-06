@@ -12,7 +12,7 @@ Collaboration presence (cx_presence) is separate from router readiness
 and must stay uncoupled except through future explicit tenant policy
 (the seam is cx_presence_session:recompute/1). Presence stores
 declarations, observes connectivity, computes effective state — never
-store the computed answer, only cache it (cx_presence_eff, dead-pid
+store the computed answer, only cache it (cx_presence_effective, dead-pid
 rows are garbage). WebSocket auth is in-band first-frame (browsers
 cannot set Authorization on sockets); agent permission for presence is
 `presence:set:self`.
@@ -64,7 +64,7 @@ never releases.
 - Every Mnesia key is `{TenantId, Id}`; cross-tenant references must stay
   inexpressible. New tables follow the same shape and are added in
   `cx_db:table_specs/0`.
-- Every domain operation is a plain function taking `#auth_ctx{}` as its
+- Every domain operation is a plain function taking `#auth_context{}` as its
   first argument; `cx_authz:require/2` is called in the domain layer,
   never in transports. REST handlers only decode → call → `cx_handler:reply`.
 - Processes: named generic timeouts only (never `erlang:send_after` in

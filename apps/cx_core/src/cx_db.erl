@@ -87,10 +87,10 @@ table_specs() ->
         {cx_agent_snapshot, [
             {attributes, record_info(fields, cx_agent_snapshot)}, {type, set}, Ram
         ]},
-        {cx_presence_decl, [
-            {attributes, record_info(fields, cx_presence_decl)}, {type, set}, Disc
+        {cx_presence_declaration, [
+            {attributes, record_info(fields, cx_presence_declaration)}, {type, set}, Disc
         ]},
-        {cx_presence_eff, [
-            {attributes, record_info(fields, cx_presence_eff)}, {type, set}, Ram
+        {cx_presence_effective, [
+            {attributes, record_info(fields, cx_presence_effective)}, {type, set}, Ram
         ]}
     ].

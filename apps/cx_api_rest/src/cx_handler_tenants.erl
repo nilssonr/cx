@@ -8,7 +8,7 @@
 init(Req0, Opts = #{ctx := Ctx}) ->
     {Result, Req1} = dispatch(
         cowboy_req:method(Req0),
-        cowboy_req:binding(tid, Req0),
+        cowboy_req:binding(tenant_id, Req0),
         Ctx,
         Req0
     ),
@@ -16,13 +16,13 @@ init(Req0, Opts = #{ctx := Ctx}) ->
 
 dispatch(<<"GET">>, undefined, Ctx, Req) ->
     {cx_tenant:list(Ctx), Req};
-dispatch(<<"GET">>, Tid, Ctx, Req) ->
-    {cx_tenant:get(Ctx, Tid), Req};
+dispatch(<<"GET">>, TenantId, Ctx, Req) ->
+    {cx_tenant:get(Ctx, TenantId), Req};
 dispatch(<<"POST">>, undefined, Ctx, Req) ->
     cx_handler:with_body(Req, fun(Params) -> cx_tenant:create(Ctx, Params) end);
-dispatch(<<"PUT">>, Tid, Ctx, Req) when Tid =/= undefined ->
-    cx_handler:with_body(Req, fun(Params) -> cx_tenant:update(Ctx, Tid, Params) end);
-dispatch(<<"DELETE">>, Tid, Ctx, Req) when Tid =/= undefined ->
-    {cx_tenant:delete(Ctx, Tid), Req};
+dispatch(<<"PUT">>, TenantId, Ctx, Req) when TenantId =/= undefined ->
+    cx_handler:with_body(Req, fun(Params) -> cx_tenant:update(Ctx, TenantId, Params) end);
+dispatch(<<"DELETE">>, TenantId, Ctx, Req) when TenantId =/= undefined ->
+    {cx_tenant:delete(Ctx, TenantId), Req};
 dispatch(_, _, _, Req) ->
     {{error, method_not_allowed}, Req}.

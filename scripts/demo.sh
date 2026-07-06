@@ -42,7 +42,7 @@ SKILL=$(req "$BOSS_TOKEN" POST "$BASE/skills" \
     '{"name":"Permits","levels":[{"rank":1,"name":"trainee"},{"rank":2,"name":"expert"}]}' | field id)
 QUEUE=$(req "$BOSS_TOKEN" POST "$BASE/queues" \
     "{\"name\":\"Building permits\",\"wrapup_duration_ms\":3000,
-      \"skill_reqs\":[{\"skill_id\":\"$SKILL\",\"min_rank\":1}]}" | field id)
+      \"skill_requirements\":[{\"skill_id\":\"$SKILL\",\"min_rank\":1}]}" | field id)
 echo "media=$MEDIA skill=$SKILL queue=$QUEUE"
 
 echo "== routing profile (capacity 1 — after-call work occupies the slot)"
@@ -75,7 +75,7 @@ echo "interaction=$IID"
 
 echo "== agent polls for the offer"
 OFFER=""
-for _ in $(seq 1 50); do
+for _ in $(sequence 1 50); do
     OFFER=$(req "$AGENT_TOKEN" GET /api/v1/agent/session \
         | python3 -c 'import sys,json;o=json.load(sys.stdin)["pending_offers"];print(o[0]["offer_id"] if o else "")')
     [ -n "$OFFER" ] && break
@@ -102,7 +102,7 @@ echo "offers during wrap-up: $PENDING (expected 0)"
 echo "== finalize the wrap-up -> offer flows"
 req "$AGENT_TOKEN" POST "/api/v1/agent/interactions/$IID/wrapup/finalize"
 OFFER2=""
-for _ in $(seq 1 50); do
+for _ in $(sequence 1 50); do
     OFFER2=$(req "$AGENT_TOKEN" GET /api/v1/agent/session \
         | python3 -c 'import sys,json;o=json.load(sys.stdin)["pending_offers"];print(o[0]["offer_id"] if o else "")')
     [ -n "$OFFER2" ] && break

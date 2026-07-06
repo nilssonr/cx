@@ -43,14 +43,14 @@ mix() ->
 
 guard() ->
     ?LET(
-        {W, Gte, Block},
+        {W, AtLeast, Block},
         {media(), choose(1, 5), non_empty(list(media()))},
-        #rp_guard{when_media = W, gte = Gte, block = lists:usort(Block)}
+        #routing_profile_guard{when_media = W, at_least = AtLeast, block = lists:usort(Block)}
     ).
 
 profile() ->
     ?LET(
-        {MaxTotal, Caps, Guards},
+        {MaxTotal, Capacities, Guards},
         {
             oneof([unlimited, choose(1, 10)]),
             ?LET(Pairs, list({media(), choose(0, 5)}), maps:from_list(Pairs)),
@@ -60,15 +60,15 @@ profile() ->
             key = {<<"t">>, <<"p">>},
             name = <<"p">>,
             max_total = MaxTotal,
-            media_caps = Caps,
+            media_capacities = Capacities,
             guards = Guards
         }
     ).
 
-%% Valid skill_req: widening sorted ascending by after_ms with
+%% Valid skill_requirement: widening sorted ascending by after_ms with
 %% non-increasing ranks bounded by the base rank (as config validation
 %% enforces).
-skill_req() ->
+skill_requirement() ->
     ?LET(
         {SkillId, Base, RawSteps},
         {
@@ -82,7 +82,7 @@ skill_req() ->
                 lists:reverse(lists:sort([min(R, Base) || {_, R} <- RawSteps])),
                 length(Afters)
             ),
-            #skill_req{
+            #skill_requirement{
                 skill_id = SkillId,
                 min_rank = Base,
                 widening = lists:zip(Afters, Ranks)
@@ -162,7 +162,7 @@ prop_total_cap_invariant() ->
 prop_widening_monotone() ->
     ?FORALL(
         {Req, T1, T2},
-        {skill_req(), choose(0, 200000), choose(0, 200000)},
+        {skill_requirement(), choose(0, 200000), choose(0, 200000)},
         begin
             [Lo, Hi] = lists:sort([T1, T2]),
             [{_, RankEarly}] = cx_routing:effective_requirements([Req], Lo),
@@ -176,7 +176,7 @@ prop_eligible_superset_over_time() ->
     ?FORALL(
         {Reqs, Snaps, T1, T2},
         {
-            non_empty(list(skill_req())),
+            non_empty(list(skill_requirement())),
             non_empty(list(snapshot())),
             choose(0, 200000),
             choose(0, 200000)

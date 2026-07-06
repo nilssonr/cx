@@ -5,7 +5,7 @@
 -export([create/2, get/2, list/1, update/3, delete/2]).
 -export([fetch/2, to_map/1]).
 
-create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"skills:write">>),
         {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
@@ -16,17 +16,17 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, to_map(Rec)}
     end.
 
-get(#auth_ctx{tenant_id = T}, SkillId) ->
+get(#auth_context{tenant_id = T}, SkillId) ->
     maybe
         {ok, Rec} ?= cx_store:read(cx_skill, {T, SkillId}),
         {ok, to_map(Rec)}
     end.
 
-list(#auth_ctx{tenant_id = T}) ->
+list(#auth_context{tenant_id = T}) ->
     Recs = cx_store:list(cx_skill, cx_patterns:skills(T)),
     {ok, [to_map(R) || R <- Recs]}.
 
-update(Ctx = #auth_ctx{tenant_id = T}, SkillId, Params) ->
+update(Ctx = #auth_context{tenant_id = T}, SkillId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"skills:write">>),
         {ok, Rec0} ?= cx_store:read(cx_skill, {T, SkillId}),
@@ -45,7 +45,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, SkillId, Params) ->
 %% Deleting a skill that users hold or queues require is blocked (409):
 %% cascading would silently rewrite routing behavior; the admin resolves
 %% the references deliberately. Checked inside the delete transaction.
-delete(Ctx = #auth_ctx{tenant_id = T}, SkillId) ->
+delete(Ctx = #auth_context{tenant_id = T}, SkillId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"skills:write">>),
         ok ?=
@@ -71,8 +71,8 @@ referenced(T, SkillId) ->
     ),
     UserHolds orelse
         lists:any(
-            fun(#cx_queue{skill_reqs = Reqs}) ->
-                lists:keymember(SkillId, #skill_req.skill_id, Reqs)
+            fun(#cx_queue{skill_requirements = Reqs}) ->
+                lists:keymember(SkillId, #skill_requirement.skill_id, Reqs)
             end,
             mnesia:match_object(cx_patterns:queues(T))
         ).

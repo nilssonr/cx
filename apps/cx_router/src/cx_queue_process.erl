@@ -1,7 +1,7 @@
 -module(cx_queue_process).
 
 %% One process per queue. Owns the waiting order (gb_trees keyed by
-%% {enqueued_at, seq} — assigned once, stored in Mnesia, so a rejected,
+%% {enqueued_at, sequence} — assigned once, stored in Mnesia, so a rejected,
 %% timed-out or recovered interaction never loses its place) and the live
 %% offers. This process is the single serialization point for
 %% accept-vs-timeout races.
@@ -22,9 +22,9 @@
     interaction_id :: binary(),
     media :: binary(),
     %% snapshot at enqueue
-    skill_reqs :: [#skill_req{}],
+    skill_requirements :: [#skill_requirement{}],
     enqueued_at :: integer(),
-    seq :: integer(),
+    sequence :: integer(),
     %% rejected/timed out; skipped
     offered_to = [] :: [binary()]
 }).
@@ -44,7 +44,7 @@
     waiting = gb_trees:empty() :: gb_trees:tree(),
     by_id = #{} :: #{binary() => {integer(), integer()}},
     offers = #{} :: #{binary() => #qoffer{}},
-    seq = 0 :: integer()
+    sequence = 0 :: integer()
 }).
 
 start_link(TenantId, QueueId) ->
@@ -85,7 +85,7 @@ init([TenantId, QueueId]) ->
     end.
 
 %% Rebuild waiting state from Mnesia: queued and offered interactions are
-%% re-enqueued under their preserved {enqueued_at, seq} keys (an offer
+%% re-enqueued under their preserved {enqueued_at, sequence} keys (an offer
 %% that was live when we died simply degrades to "requeued at original
 %% position").
 recover(Data = #qd{tenant = TenantId, queue_id = QueueId}) ->
@@ -118,26 +118,26 @@ recover(Data = #qd{tenant = TenantId, queue_id = QueueId}) ->
             Item = #witem{
                 interaction_id = element(2, Rec#cx_interaction.key),
                 media = Rec#cx_interaction.media_type,
-                skill_reqs = (Acc#qd.config)#cx_queue.skill_reqs,
+                skill_requirements = (Acc#qd.config)#cx_queue.skill_requirements,
                 enqueued_at = Rec#cx_interaction.enqueued_at,
-                seq = Rec#cx_interaction.seq
+                sequence = Rec#cx_interaction.sequence
             },
             %% prepend: uniquely-named timeouts, order-free (see try_route)
             {insert_item(Item, Acc), widen_actions(Item, Now) ++ Actions}
         end,
-        {Data#qd{seq = next_seq(Recs)}, []},
+        {Data#qd{sequence = next_sequence(Recs)}, []},
         Recs
     ).
 
-next_seq([]) -> 0;
-next_seq(Recs) -> lists:max([R#cx_interaction.seq || R <- Recs]) + 1.
+next_sequence([]) -> 0;
+next_sequence(Recs) -> lists:max([R#cx_interaction.sequence || R <- Recs]) + 1.
 
 %% ---- events ----
 
 handle_event({call, From}, {enqueue, IId, Media, Props, CreatedAt}, _S, Data) ->
     Config = refresh_config(Data),
     Now = cx_time:now_ms(),
-    Seq = Data#qd.seq,
+    Sequence = Data#qd.sequence,
     Rec = #cx_interaction{
         key = {Data#qd.tenant, IId},
         queue_key = {Data#qd.tenant, Data#qd.queue_id},
@@ -146,17 +146,17 @@ handle_event({call, From}, {enqueue, IId, Media, Props, CreatedAt}, _S, Data) ->
         state = queued,
         created_at = CreatedAt,
         enqueued_at = Now,
-        seq = Seq
+        sequence = Sequence
     },
     ok = cx_store:tx(fun() -> mnesia:write(Rec) end),
     Item = #witem{
         interaction_id = IId,
         media = Media,
-        skill_reqs = Config#cx_queue.skill_reqs,
+        skill_requirements = Config#cx_queue.skill_requirements,
         enqueued_at = Now,
-        seq = Seq
+        sequence = Sequence
     },
-    Data1 = insert_item(Item, Data#qd{seq = Seq + 1, config = Config}),
+    Data1 = insert_item(Item, Data#qd{sequence = Sequence + 1, config = Config}),
     publish(Data1, Media, interaction_queued, #{<<"interaction_id">> => IId}),
     {keep_state, Data1,
         [{reply, From, {ok, IId}} | widen_actions(Item, Now)] ++
@@ -233,7 +233,7 @@ handle_event({call, From}, {rejected, OfferId}, _S, Data) ->
             {keep_state_and_data, [{reply, From, {error, expired}}]}
     end;
 %% force sign-out hands an ENGAGED (active/held) interaction back: it
-%% re-enters the waiting order under its preserved {enqueued_at, seq},
+%% re-enters the waiting order under its preserved {enqueued_at, sequence},
 %% so it never loses its place. The state guard makes a duplicate cast
 %% a no-op (first one flips the row to queued).
 handle_event(cast, {requeue_active, IId}, _S, Data) ->
@@ -257,9 +257,9 @@ handle_event(cast, {requeue_active, IId}, _S, Data) ->
             Item = #witem{
                 interaction_id = IId,
                 media = Rec#cx_interaction.media_type,
-                skill_reqs = Config#cx_queue.skill_reqs,
+                skill_requirements = Config#cx_queue.skill_requirements,
                 enqueued_at = Rec#cx_interaction.enqueued_at,
-                seq = Rec#cx_interaction.seq
+                sequence = Rec#cx_interaction.sequence
             },
             Data1 = insert_item(Item, Data#qd{config = Config}),
             publish(
@@ -361,7 +361,7 @@ try_route(Data = #qd{tenant = TenantId}) ->
 
 route_item(Item, Snapshots, Now, Data, Offered) ->
     Reqs = cx_routing:effective_requirements(
-        Item#witem.skill_reqs,
+        Item#witem.skill_requirements,
         Now - Item#witem.enqueued_at
     ),
     Eligible = [
@@ -417,7 +417,7 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
                 mnesia:write(Rec#cx_interaction{state = offered})
             end),
             {_, Waiting} = take_item(
-                {Item#witem.enqueued_at, Item#witem.seq},
+                {Item#witem.enqueued_at, Item#witem.sequence},
                 Data#qd.waiting
             ),
             QOffer = #qoffer{
@@ -478,8 +478,8 @@ take_offer(OfferId, Data) ->
             error
     end.
 
-insert_item(Item = #witem{enqueued_at = At, seq = Seq}, Data) ->
-    Key = {At, Seq},
+insert_item(Item = #witem{enqueued_at = At, sequence = Sequence}, Data) ->
+    Key = {At, Sequence},
     Data#qd{
         waiting = gb_trees:insert(Key, Item, Data#qd.waiting),
         by_id = maps:put(Item#witem.interaction_id, Key, Data#qd.by_id)
@@ -519,7 +519,7 @@ requeue(#qoffer{item = Item, agent_id = AgentId}, Penalize, EventType, Data) ->
 widen_actions(
     #witem{
         interaction_id = IId,
-        skill_reqs = Reqs,
+        skill_requirements = Reqs,
         enqueued_at = At
     },
     Now
@@ -527,7 +527,7 @@ widen_actions(
     Waited = Now - At,
     Steps = lists:usort([
         AfterMs
-     || #skill_req{widening = W} <- Reqs,
+     || #skill_requirement{widening = W} <- Reqs,
         {AfterMs, _} <- W,
         AfterMs > Waited
     ]),

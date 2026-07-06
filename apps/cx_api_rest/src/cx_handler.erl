@@ -67,15 +67,15 @@ with_body(Req0, Fun) ->
         _ -> {{error, {invalid, json}}, Req1}
     end.
 
-%% Admin routes carry :tid. Operating on your own tenant is the normal
+%% Admin routes carry :tenant_id. Operating on your own tenant is the normal
 %% case; operating on another requires tenants:admin, and the ctx is
 %% rescoped to the path tenant so every downstream key is built from it.
--spec scope_tenant(#auth_ctx{}, binary()) ->
-    {ok, #auth_ctx{}} | {error, forbidden}.
-scope_tenant(Ctx = #auth_ctx{tenant_id = Tid}, Tid) ->
+-spec scope_tenant(#auth_context{}, binary()) ->
+    {ok, #auth_context{}} | {error, forbidden}.
+scope_tenant(Ctx = #auth_context{tenant_id = TenantId}, TenantId) ->
     {ok, Ctx};
-scope_tenant(Ctx, Tid) ->
+scope_tenant(Ctx, TenantId) ->
     case cx_authz:has(Ctx, <<"tenants:admin">>) of
-        true -> {ok, Ctx#auth_ctx{tenant_id = Tid}};
+        true -> {ok, Ctx#auth_context{tenant_id = TenantId}};
         false -> {error, forbidden}
     end.

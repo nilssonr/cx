@@ -2,7 +2,7 @@
 
 %% Domain facade for the router: every operation a transport (REST today,
 %% gRPC/GraphQL later) can invoke exists here as a plain function taking
-%% an #auth_ctx{}. Permission checks live here or below — never in
+%% an #auth_context{}. Permission checks live here or below — never in
 %% transports.
 
 -include_lib("cx_core/include/cx_core.hrl").
@@ -23,7 +23,7 @@
 %% Idempotent sign-in: the token identity IS the natural idempotency
 %% key (one session per {tenant, user}), so a retried POST returns the
 %% live session's state exactly like GET would.
-start_session(Ctx = #auth_ctx{tenant_id = T, user_id = UserId}) ->
+start_session(Ctx = #auth_context{tenant_id = T, user_id = UserId}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
         ok ?= cx_authz:require_user(Ctx),
@@ -49,7 +49,7 @@ stop_session(Ctx) ->
 %% Idempotent sign-out: no session to delete is already the desired
 %% state. Force requeues engaged work and finalizes ACW (the escape
 %% hatch past has_active_interactions and qualification_required).
-stop_session(Ctx = #auth_ctx{}, Force) ->
+stop_session(Ctx = #auth_context{}, Force) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
         case {session_of(Ctx), Force} of
@@ -60,7 +60,7 @@ stop_session(Ctx = #auth_ctx{}, Force) ->
     end.
 
 %% Supervisor kick-out — a separate, deliberately grantable authority.
-force_stop_session(Ctx = #auth_ctx{tenant_id = T}, UserId) ->
+force_stop_session(Ctx = #auth_context{tenant_id = T}, UserId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:any">>),
         case cx_registry:whereis_name({agent, T, UserId}) of
@@ -69,7 +69,7 @@ force_stop_session(Ctx = #auth_ctx{tenant_id = T}, UserId) ->
         end
     end.
 
-get_session(Ctx = #auth_ctx{}) ->
+get_session(Ctx = #auth_context{}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
         {ok, Pid} ?= session_of(Ctx),
@@ -78,7 +78,7 @@ get_session(Ctx = #auth_ctx{}) ->
 
 %% ---- readiness ----
 
-set_ready(Ctx = #auth_ctx{tenant_id = T}, Media, ReadyState) ->
+set_ready(Ctx = #auth_context{tenant_id = T}, Media, ReadyState) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:ready:self">>),
         ok ?= valid_media(Media),
@@ -106,7 +106,7 @@ validate_reason(T, {not_ready, ReasonId}) ->
 
 %% ---- interactions (Open Media rides on this directly) ----
 
-create_interaction(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create_interaction(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:create">>),
         {ok, QueueId} ?= cx_params:require_bin(Params, <<"queue_id">>),
@@ -120,7 +120,7 @@ create_interaction(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, #{<<"id">> => IId}}
     end.
 
-cancel_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
+cancel_interaction(Ctx = #auth_context{tenant_id = T}, IId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:cancel">>),
         {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
@@ -129,7 +129,7 @@ cancel_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
         call(QPid, {cancel, IId})
     end.
 
-get_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
+get_interaction(Ctx = #auth_context{tenant_id = T}, IId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:read">>),
         {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
@@ -140,7 +140,7 @@ get_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
 %% query-string map; unknown keys are ignored, malformed values are 422.
 %% M1 scale note: this match-objects the tenant's interactions and
 %% filters/sorts in memory — revisit with a real index when volume says so.
-list_interactions(Ctx = #auth_ctx{tenant_id = T}, Filters) ->
+list_interactions(Ctx = #auth_context{tenant_id = T}, Filters) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"interactions:read">>),
         {ok, Limit} ?= parse_limit(Filters),
@@ -163,7 +163,7 @@ list_interactions(Ctx = #auth_ctx{tenant_id = T}, Filters) ->
 %% One owned interaction (any phase, wrap-up included) through the
 %% agent's eyes. After finalize it leaves this surface — integrators
 %% keep the tenant-wide GET.
-agent_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
+agent_interaction(Ctx = #auth_context{tenant_id = T}, IId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Pid} ?= session_of(Ctx),
@@ -175,7 +175,7 @@ agent_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
 
 %% The agent's own interactions in full detail — the rehydration surface
 %% a reconnecting client uses instead of replaying missed events.
-agent_interactions(Ctx = #auth_ctx{tenant_id = T}) ->
+agent_interactions(Ctx = #auth_context{tenant_id = T}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Pid} ?= session_of(Ctx),
@@ -340,7 +340,7 @@ resume(Ctx, IId) ->
 
 %% PUT-semantics: the given list REPLACES the interaction's codes ([]
 %% clears them). Any active node of the tenant's tree is selectable.
-qualify(Ctx = #auth_ctx{tenant_id = T}, IId, Params) ->
+qualify(Ctx = #auth_context{tenant_id = T}, IId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
         {ok, Ids} ?= parse_qualification_ids(Params),
@@ -389,7 +389,7 @@ interaction_op(Ctx, Perm, Msg) ->
         call(Pid, Msg)
     end.
 
-completed_by_me(#auth_ctx{tenant_id = T, user_id = UserId}, IId) ->
+completed_by_me(#auth_context{tenant_id = T, user_id = UserId}, IId) ->
     case cx_store:read(cx_interaction, {T, IId}) of
         {ok, #cx_interaction{state = completed, agent_id = UserId}} when
             UserId =/= undefined
@@ -401,7 +401,7 @@ completed_by_me(#auth_ctx{tenant_id = T, user_id = UserId}, IId) ->
 
 %% ---- helpers ----
 
-session_of(#auth_ctx{tenant_id = T, user_id = UserId}) ->
+session_of(#auth_context{tenant_id = T, user_id = UserId}) ->
     case
         UserId =/= undefined andalso
             cx_registry:whereis_name({agent, T, UserId})

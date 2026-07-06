@@ -11,11 +11,12 @@
 -define(DEFAULT_WRAPUP_DURATION_MS, 30000).
 -define(DEFAULT_OFFER_TIMEOUT_MS, 6000).
 
-create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
+create(Ctx = #auth_context{tenant_id = T}, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
         {ok, Name} ?= cx_params:require_bin(Params, <<"name">>),
-        {ok, SkillReqs} ?= parse_skill_reqs(maps:get(<<"skill_reqs">>, Params, [])),
+        {ok, SkillRequirements} ?=
+            parse_skill_requirements(maps:get(<<"skill_requirements">>, Params, [])),
         {ok, WrapupMs} ?=
             cx_params:opt_int(
                 Params,
@@ -30,7 +31,7 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         Rec = #cx_queue{
             key = {T, cx_id:new()},
             name = Name,
-            skill_reqs = SkillReqs,
+            skill_requirements = SkillRequirements,
             wrapup_duration_ms = WrapupMs,
             wrapup_max_ms = WrapupMaxMs,
             offer_timeout_ms = OfferMs,
@@ -42,29 +43,29 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
         {ok, to_map(Rec)}
     end.
 
-get(Ctx = #auth_ctx{tenant_id = T}, QueueId) ->
+get(Ctx = #auth_context{tenant_id = T}, QueueId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:read">>),
         {ok, Rec} ?= cx_store:read(cx_queue, {T, QueueId}),
         {ok, to_map(Rec)}
     end.
 
-list(Ctx = #auth_ctx{tenant_id = T}) ->
+list(Ctx = #auth_context{tenant_id = T}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:read">>),
         Recs = cx_store:list(cx_queue, cx_patterns:queues(T)),
         {ok, [to_map(R) || R <- Recs]}
     end.
 
-update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
+update(Ctx = #auth_context{tenant_id = T}, QueueId, Params) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
         {ok, Rec0} ?= cx_store:read(cx_queue, {T, QueueId}),
         {ok, Name} ?= cx_params:opt_bin(Params, <<"name">>, Rec0#cx_queue.name),
-        {ok, SkillReqs} ?=
+        {ok, SkillRequirements} ?=
             case Params of
-                #{<<"skill_reqs">> := Raw} -> parse_skill_reqs(Raw);
-                _ -> {ok, Rec0#cx_queue.skill_reqs}
+                #{<<"skill_requirements">> := Raw} -> parse_skill_requirements(Raw);
+                _ -> {ok, Rec0#cx_queue.skill_requirements}
             end,
         {ok, WrapupMs} ?=
             cx_params:opt_int(
@@ -91,7 +92,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
             ),
         Rec = Rec0#cx_queue{
             name = Name,
-            skill_reqs = SkillReqs,
+            skill_requirements = SkillRequirements,
             wrapup_duration_ms = WrapupMs,
             wrapup_max_ms = WrapupMaxMs,
             offer_timeout_ms = OfferMs,
@@ -103,7 +104,7 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
         {ok, to_map(Rec)}
     end.
 
-delete(Ctx = #auth_ctx{tenant_id = T}, QueueId) ->
+delete(Ctx = #auth_context{tenant_id = T}, QueueId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"queues:write">>),
         ok ?=
@@ -125,18 +126,18 @@ fetch(TenantId, QueueId) ->
 %% concurrent skill delete cannot race a dangling requirement in.
 write_checked(T, Rec) ->
     cx_store:tx(fun() ->
-        SkillIds = [S || #skill_req{skill_id = S} <- Rec#cx_queue.skill_reqs],
+        SkillIds = [S || #skill_requirement{skill_id = S} <- Rec#cx_queue.skill_requirements],
         Missing = [S || S <- SkillIds, mnesia:read(cx_skill, {T, S}) =:= []],
         case Missing of
             [] -> mnesia:write(Rec);
-            _ -> {error, {invalid, <<"skill_reqs">>}}
+            _ -> {error, {invalid, <<"skill_requirements">>}}
         end
     end).
 
 to_map(#cx_queue{
     key = {_, Id},
     name = Name,
-    skill_reqs = SkillReqs,
+    skill_requirements = SkillRequirements,
     wrapup_duration_ms = WrapupMs,
     wrapup_max_ms = WrapupMaxMs,
     offer_timeout_ms = OfferMs,
@@ -146,7 +147,7 @@ to_map(#cx_queue{
     #{
         <<"id">> => Id,
         <<"name">> => Name,
-        <<"skill_reqs">> => [skill_req_to_map(R) || R <- SkillReqs],
+        <<"skill_requirements">> => [skill_requirement_to_map(R) || R <- SkillRequirements],
         <<"wrapup_duration_ms">> => WrapupMs,
         <<"wrapup_max_ms">> => infinity_ms_to_json(WrapupMaxMs),
         <<"offer_timeout_ms">> => infinity_ms_to_json(OfferMs),
@@ -177,7 +178,7 @@ opt_infinity_ms(Params, Key, Default) ->
 infinity_ms_to_json(infinity) -> 0;
 infinity_ms_to_json(Ms) -> Ms.
 
-skill_req_to_map(#skill_req{
+skill_requirement_to_map(#skill_requirement{
     skill_id = SkillId,
     min_rank = MinRank,
     widening = Widening
@@ -197,7 +198,7 @@ skill_req_to_map(#skill_req{
 %% Ranks must be non-increasing over time (widening relaxes, never
 %% tightens) — this is what makes the eligible agent set grow
 %% monotonically with wait time.
-parse_skill_reqs(Raw) when is_list(Raw) ->
+parse_skill_requirements(Raw) when is_list(Raw) ->
     try
         Reqs = lists:map(
             fun(M) when is_map(M) ->
@@ -218,7 +219,7 @@ parse_skill_reqs(Raw) when is_list(Raw) ->
                 Sorted = lists:keysort(1, Widening),
                 Ranks = [MinRank | [R || {_, R} <- Sorted]],
                 true = Ranks =:= lists:reverse(lists:sort(Ranks)),
-                #skill_req{
+                #skill_requirement{
                     skill_id = SkillId,
                     min_rank = MinRank,
                     widening = Sorted
@@ -228,10 +229,10 @@ parse_skill_reqs(Raw) when is_list(Raw) ->
         ),
         {ok, Reqs}
     catch
-        _:_ -> {error, {invalid, <<"skill_reqs">>}}
+        _:_ -> {error, {invalid, <<"skill_requirements">>}}
     end;
-parse_skill_reqs(_) ->
-    {error, {invalid, <<"skill_reqs">>}}.
+parse_skill_requirements(_) ->
+    {error, {invalid, <<"skill_requirements">>}}.
 
 publish(TenantId, QueueId, Type) ->
     cx_event:publish(TenantId, QueueId, undefined, Type, #{<<"id">> => QueueId}).

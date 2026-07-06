@@ -2,11 +2,11 @@
 
 %% One gen_statem per user with at least one live connection. Owns the
 %% connectivity observations (device pids, last activity) and the
-%% presence timers; everything durable lives in cx_presence_decl.
+%% presence timers; everything durable lives in cx_presence_declaration.
 %%
 %% Invariants:
 %%   - this process exists  <=>  the user has >= 1 live connection
-%%   - a cx_presence_eff row exists  <=>  this process owns it
+%%   - a cx_presence_effective row exists  <=>  this process owns it
 %% The last disconnect publishes offline and stops immediately (no
 %% linger) — flap dampening is the transport's reconnect concern, and
 %% consumers must tolerate offline/online pairs anyway (crash recovery
@@ -98,7 +98,7 @@ handle_event(_Type, _Event, _S, _Data) ->
 
 terminate(_Reason, _State, Data) ->
     try
-        mnesia:dirty_delete(cx_presence_eff, {Data#pd.tenant, Data#pd.user_id})
+        mnesia:dirty_delete(cx_presence_effective, {Data#pd.tenant, Data#pd.user_id})
     catch
         _:_ -> ok
     end,
@@ -127,7 +127,7 @@ drop_conn(ConnPid, Data) ->
 
 read_declared(TenantId, UserId) ->
     Row =
-        case mnesia:dirty_read(cx_presence_decl, {TenantId, UserId}) of
+        case mnesia:dirty_read(cx_presence_declaration, {TenantId, UserId}) of
             [R] -> R;
             [] -> undefined
         end,
@@ -146,7 +146,7 @@ recompute(Data = #pd{tenant = T, user_id = U}) ->
         ),
     #{manual_state := NormManual, until := NormUntil} =
         cx_presence_calculation:normalize(Data#pd.declared, Now),
-    write_eff(Data, State, Message, NormUntil, DeviceCount, Now),
+    write_effective(Data, State, Message, NormUntil, DeviceCount, Now),
     Changed = {State, Message} =/= Data#pd.last_effective,
     Changed andalso publish(T, U, State, Message, NormUntil),
     Actions =
@@ -154,8 +154,8 @@ recompute(Data = #pd{tenant = T, user_id = U}) ->
             until_action(NormUntil, Now),
     {Data#pd{last_effective = {State, Message}}, Actions}.
 
-write_eff(#pd{tenant = T, user_id = U}, State, Message, Until, DeviceCount, Now) ->
-    ok = mnesia:dirty_write(#cx_presence_eff{
+write_effective(#pd{tenant = T, user_id = U}, State, Message, Until, DeviceCount, Now) ->
+    ok = mnesia:dirty_write(#cx_presence_effective{
         key = {T, U},
         pid = self(),
         state = State,

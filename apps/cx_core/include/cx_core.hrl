@@ -12,7 +12,7 @@
 %% Produced by cx_auth from a validated token; consumed by every domain
 %% function. Lives in cx_core (not cx_auth) because cx_core enforces
 %% permissions and cx_auth depends on cx_core.
--record(auth_ctx, {
+-record(auth_context, {
     tenant_id :: binary(),
     user_id :: binary() | undefined,
     subject :: binary() | undefined,
@@ -58,7 +58,7 @@
 
 %% Widening steps are sorted ascending by AfterMs with non-increasing
 %% ranks (validated at config write); each step REPLACES min_rank.
--record(skill_req, {
+-record(skill_requirement, {
     skill_id :: binary(),
     min_rank :: pos_integer(),
     widening = [] :: [{AfterMs :: pos_integer(), MinRank :: pos_integer()}]
@@ -67,7 +67,7 @@
 -record(cx_queue, {
     key :: {binary(), binary()},
     name :: binary(),
-    skill_reqs = [] :: [#skill_req{}],
+    skill_requirements = [] :: [#skill_requirement{}],
     %% no record defaults on purpose: the creation defaults live in
     %% cx_queue:create/2, so every construction states its values and
     %% eqWAlizer rejects one that forgets
@@ -84,10 +84,10 @@
     status = open :: open | closed
 }).
 
-%% "If I'm handling >= Gte of when_media, don't route me any of block."
--record(rp_guard, {
+%% "If I'm handling >= AtLeast of when_media, don't route me any of block."
+-record(routing_profile_guard, {
     when_media :: binary(),
-    gte :: pos_integer(),
+    at_least :: pos_integer(),
     block = [] :: [binary()]
 }).
 
@@ -95,8 +95,8 @@
     key :: {binary(), binary()},
     name :: binary(),
     max_total = unlimited :: pos_integer() | unlimited,
-    media_caps = #{} :: #{binary() => pos_integer()},
-    guards = [] :: [#rp_guard{}]
+    media_capacities = #{} :: #{binary() => pos_integer()},
+    guards = [] :: [#routing_profile_guard{}]
 }).
 
 -record(cx_not_ready_reason, {
@@ -117,7 +117,7 @@
     active = true :: boolean()
 }).
 
-%% enqueued_at + seq form the queue position and are assigned exactly once;
+%% enqueued_at + sequence form the queue position and are assigned exactly once;
 %% requeues (reject/timeout/crash) and queue-process recovery reuse them, so
 %% an interaction can never lose its place.
 %%
@@ -136,7 +136,7 @@
     agent_id :: binary() | undefined,
     created_at :: integer(),
     enqueued_at :: integer(),
-    seq :: integer(),
+    sequence :: integer(),
     accepted_at :: integer() | undefined,
     wrapup_started_at :: integer() | undefined,
     wrapup_until :: integer() | undefined,
@@ -151,7 +151,7 @@
 %% ever COMPARED to now, never rewritten — so connectionless users
 %% expire lazily with no process (and no event fires at that moment;
 %% clients self-expire using the `until` in presence payloads).
--record(cx_presence_decl, {
+-record(cx_presence_declaration, {
     key :: {binary(), binary()},
     %% one of cx_presence_state:all(); undefined = automatic
     manual_state :: binary() | undefined,
@@ -164,7 +164,7 @@
 %% live cx_presence_session on every transition and deleted when it
 %% stops. Invariant: a row exists iff a session process owns it; read
 %% paths treat dead-pid rows as absent. Cache, never authoritative.
--record(cx_presence_eff, {
+-record(cx_presence_effective, {
     key :: {binary(), binary()},
     pid :: pid(),
     %% one of cx_presence_state:all()

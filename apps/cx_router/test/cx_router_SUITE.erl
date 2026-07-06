@@ -279,7 +279,7 @@ widening_admits_lower_rank(_Config) ->
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 0,
-        <<"skill_reqs">> =>
+        <<"skill_requirements">> =>
             [
                 #{
                     <<"skill_id">> => SkillId,
@@ -325,7 +325,7 @@ guard_blocks_media(_Config) ->
             [
                 #{
                     <<"when_media">> => Voice,
-                    <<"gte">> => 1,
+                    <<"at_least">> => 1,
                     <<"block">> => [Om]
                 }
             ]
@@ -573,7 +573,7 @@ wrapup_gates_only_its_media(_Config) ->
     }),
     ProfileId = profile(Admin, #{
         <<"name">> => <<"capped-chat">>,
-        <<"media_caps">> => #{Chat => 1}
+        <<"media_capacities">> => #{Chat => 1}
     }),
     UserId = user(Admin, #{}, ProfileId),
     Agent = start_agent(T, UserId),

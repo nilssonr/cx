@@ -63,7 +63,7 @@ expired_until_strips_message_even_offline_test() ->
     ).
 
 connectionless_test() ->
-    Row = #cx_presence_decl{
+    Row = #cx_presence_declaration{
         key = {<<"t">>, <<"u">>},
         manual_state = <<"busy">>,
         message = <<"m">>,
@@ -91,7 +91,7 @@ from_row_test() ->
         #{manual_state => undefined, message => undefined, until => undefined},
         cx_presence_calculation:from_row(undefined)
     ),
-    Row = #cx_presence_decl{
+    Row = #cx_presence_declaration{
         key = {<<"t">>, <<"u">>},
         manual_state = <<"busy">>,
         message = <<"m">>,

@@ -1,6 +1,6 @@
 -module(cx_auth_claims).
 
-%% Validated claims -> #auth_ctx{}. Tenant comes from a configured claim
+%% Validated claims -> #auth_context{}. Tenant comes from a configured claim
 %% (Zitadel: the org id). Identity resolution:
 %%   - subject listed in platform_admin_subjects (sys.config) -> full
 %%     permissions, no user row needed. This is the bootstrap path for
@@ -12,7 +12,7 @@
 
 -export([to_ctx/1]).
 
--spec to_ctx(map()) -> {ok, #auth_ctx{}} | {error, unauthorized}.
+-spec to_ctx(map()) -> {ok, #auth_context{}} | {error, unauthorized}.
 to_ctx(Claims) ->
     TenantClaim = application:get_env(
         cx_auth,
@@ -32,7 +32,7 @@ resolve(TenantId, Subject, Claims) ->
     PlatformAdmins = application:get_env(cx_auth, platform_admin_subjects, []),
     case lists:member(Subject, PlatformAdmins) of
         true ->
-            {ok, #auth_ctx{
+            {ok, #auth_context{
                 tenant_id = TenantId,
                 user_id = undefined,
                 subject = Subject,
@@ -46,7 +46,7 @@ resolve(TenantId, Subject, Claims) ->
 resolve_user(TenantId, Subject, Claims) ->
     case cx_user:fetch_by_subject(TenantId, Subject) of
         {ok, #cx_user{key = {_, UserId}, status = active, role_ids = RoleIds}} ->
-            {ok, #auth_ctx{
+            {ok, #auth_context{
                 tenant_id = TenantId,
                 user_id = UserId,
                 subject = Subject,

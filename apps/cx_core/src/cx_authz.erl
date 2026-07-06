@@ -1,17 +1,17 @@
 -module(cx_authz).
 
-%% Pure authorization checks over #auth_ctx{}. Domain functions call
+%% Pure authorization checks over #auth_context{}. Domain functions call
 %% require/2 themselves — transports never enforce permissions.
 
 -include("cx_core.hrl").
 
 -export([has/2, require/2, require_user/1, ctx/2, ctx/4]).
 
--spec has(#auth_ctx{}, binary()) -> boolean().
-has(#auth_ctx{permissions = Perms}, Perm) ->
+-spec has(#auth_context{}, binary()) -> boolean().
+has(#auth_context{permissions = Perms}, Perm) ->
     sets:is_element(<<"*">>, Perms) orelse sets:is_element(Perm, Perms).
 
--spec require(#auth_ctx{}, binary()) -> ok | {error, forbidden}.
+-spec require(#auth_context{}, binary()) -> ok | {error, forbidden}.
 require(Ctx, Perm) ->
     case has(Ctx, Perm) of
         true -> ok;
@@ -20,18 +20,18 @@ require(Ctx, Perm) ->
 
 %% Operations acting on "self" need an agent identity in the token
 %% (platform admins resolve with user_id = undefined).
--spec require_user(#auth_ctx{}) -> ok | {error, no_user}.
-require_user(#auth_ctx{user_id = undefined}) -> {error, no_user};
-require_user(#auth_ctx{}) -> ok.
+-spec require_user(#auth_context{}) -> ok | {error, no_user}.
+require_user(#auth_context{user_id = undefined}) -> {error, no_user};
+require_user(#auth_context{}) -> ok.
 
 %% Constructors, mainly for tests and internal callers.
--spec ctx(binary(), [binary()]) -> #auth_ctx{}.
+-spec ctx(binary(), [binary()]) -> #auth_context{}.
 ctx(TenantId, Perms) ->
     ctx(TenantId, undefined, undefined, Perms).
 
--spec ctx(binary(), binary() | undefined, binary() | undefined, [binary()]) -> #auth_ctx{}.
+-spec ctx(binary(), binary() | undefined, binary() | undefined, [binary()]) -> #auth_context{}.
 ctx(TenantId, UserId, Subject, Perms) ->
-    #auth_ctx{
+    #auth_context{
         tenant_id = TenantId,
         user_id = UserId,
         subject = Subject,

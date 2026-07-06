@@ -54,8 +54,8 @@ platform_admin_token(Keypair) ->
         ?TENANT_CLAIM => <<"t1">>
     }),
     {ok, Ctx} = cx_auth:authenticate(<<"Bearer ", Token/binary>>),
-    ?assertEqual(<<"t1">>, Ctx#auth_ctx.tenant_id),
-    ?assertEqual(undefined, Ctx#auth_ctx.user_id),
+    ?assertEqual(<<"t1">>, Ctx#auth_context.tenant_id),
+    ?assertEqual(undefined, Ctx#auth_context.user_id),
     ?assert(cx_authz:has(Ctx, <<"anything:at:all">>)).
 
 user_token_role_permissions(Keypair) ->
@@ -78,7 +78,7 @@ user_token_role_permissions(Keypair) ->
         ?TENANT_CLAIM => T
     }),
     {ok, Ctx} = cx_auth:authenticate(Token),
-    ?assertEqual(UserId, Ctx#auth_ctx.user_id),
+    ?assertEqual(UserId, Ctx#auth_context.user_id),
     ?assert(cx_authz:has(Ctx, <<"agent:ready:self">>)),
     ?assertNot(cx_authz:has(Ctx, <<"queues:write">>)).
 

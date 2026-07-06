@@ -158,7 +158,7 @@ delete_blocked_while_referenced() ->
     {ok, #{<<"id">> := QueueId}} =
         cx_queue:create(Ctx, #{
             <<"name">> => <<"q">>,
-            <<"skill_reqs">> => [#{<<"skill_id">> => SkillId, <<"min_rank">> => 1}]
+            <<"skill_requirements">> => [#{<<"skill_id">> => SkillId, <<"min_rank">> => 1}]
         }),
     ok = cx_user:delete(Ctx, UserId),
     ?assertEqual({error, in_use}, cx_skill:delete(Ctx, SkillId)),
@@ -173,10 +173,10 @@ queue_unknown_skill_req_rejected() ->
     T = cx_id:new(),
     Ctx = admin(T),
     ?assertEqual(
-        {error, {invalid, <<"skill_reqs">>}},
+        {error, {invalid, <<"skill_requirements">>}},
         cx_queue:create(Ctx, #{
             <<"name">> => <<"q">>,
-            <<"skill_reqs">> => [#{<<"skill_id">> => <<"ghost">>, <<"min_rank">> => 1}]
+            <<"skill_requirements">> => [#{<<"skill_id">> => <<"ghost">>, <<"min_rank">> => 1}]
         })
     ).
 
@@ -290,10 +290,10 @@ queue_crud_and_skill_req_parsing() ->
             ]
         }
     ],
-    {ok, #{<<"id">> := Id, <<"skill_reqs">> := [ParsedReq]}} =
+    {ok, #{<<"id">> := Id, <<"skill_requirements">> := [ParsedReq]}} =
         cx_queue:create(Ctx, #{
             <<"name">> => <<"Building permits">>,
-            <<"skill_reqs">> => Reqs,
+            <<"skill_requirements">> => Reqs,
             <<"wrapup_duration_ms">> => 5000
         }),
     %% widening comes back sorted by after_ms
@@ -305,11 +305,11 @@ queue_crud_and_skill_req_parsing() ->
         maps:get(<<"widening">>, ParsedReq)
     ),
     ?assertEqual(
-        {error, {invalid, <<"skill_reqs">>}},
+        {error, {invalid, <<"skill_requirements">>}},
         cx_queue:update(
             Ctx,
             Id,
-            #{<<"skill_reqs">> => [#{<<"skill_id">> => <<"s1">>}]}
+            #{<<"skill_requirements">> => [#{<<"skill_id">> => <<"s1">>}]}
         )
     ),
     {ok, #{<<"status">> := <<"closed">>}} =
@@ -360,11 +360,11 @@ routing_profile_crud() ->
             #{
                 <<"name">> => <<"Default">>,
                 <<"max_total">> => 5,
-                <<"media_caps">> => #{<<"chat">> => 3},
+                <<"media_capacities">> => #{<<"chat">> => 3},
                 <<"guards">> => [
                     #{
                         <<"when_media">> => <<"voice">>,
-                        <<"gte">> => 1,
+                        <<"at_least">> => 1,
                         <<"block">> => [<<"chat">>, <<"email">>]
                     }
                 ]

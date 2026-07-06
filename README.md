@@ -134,7 +134,7 @@ finalized.
 
 - Every Mnesia key is `{TenantId, Id}`; cross-tenant references are
   inexpressible by construction.
-- Every domain operation is a plain function taking `#auth_ctx{}`;
+- Every domain operation is a plain function taking `#auth_context{}`;
   permissions are enforced in the domain, never in transports.
 - REST verbs: DELETE only removes a durable resource (CRUD entities,
   the agent session); domain state transitions are `POST /:id/<verb>`

@@ -16,7 +16,7 @@ dispatch() ->
     cowboy_router:compile([{'_', routes()}]).
 
 %% Order matters: cowboy takes the first match, so sub-resources go
-%% before "/api/v1/tenants[/:tid]".
+%% before "/api/v1/tenants[/:tenant_id]".
 routes() ->
     [
         {"/healthz", cx_handler_health, #{}},
@@ -29,21 +29,21 @@ routes() ->
         {"/api/v1/presence", cx_handler_presence, #{}},
 
         %% admin CRUD — one generic handler, parameterized by entity module
-        {"/api/v1/tenants/:tid/users/:id/agent-session", cx_handler_agent_admin, #{}},
-        {"/api/v1/tenants/:tid/users[/:id]", cx_handler_crud, #{module => cx_user}},
-        {"/api/v1/tenants/:tid/roles[/:id]", cx_handler_crud, #{module => cx_role}},
-        {"/api/v1/tenants/:tid/skills[/:id]", cx_handler_crud, #{module => cx_skill}},
-        {"/api/v1/tenants/:tid/queues[/:id]", cx_handler_crud, #{module => cx_queue}},
-        {"/api/v1/tenants/:tid/routing-profiles[/:id]", cx_handler_crud, #{
+        {"/api/v1/tenants/:tenant_id/users/:id/agent-session", cx_handler_agent_admin, #{}},
+        {"/api/v1/tenants/:tenant_id/users[/:id]", cx_handler_crud, #{module => cx_user}},
+        {"/api/v1/tenants/:tenant_id/roles[/:id]", cx_handler_crud, #{module => cx_role}},
+        {"/api/v1/tenants/:tenant_id/skills[/:id]", cx_handler_crud, #{module => cx_skill}},
+        {"/api/v1/tenants/:tenant_id/queues[/:id]", cx_handler_crud, #{module => cx_queue}},
+        {"/api/v1/tenants/:tenant_id/routing-profiles[/:id]", cx_handler_crud, #{
             module => cx_routing_profile
         }},
-        {"/api/v1/tenants/:tid/not-ready-reasons[/:id]", cx_handler_crud, #{
+        {"/api/v1/tenants/:tenant_id/not-ready-reasons[/:id]", cx_handler_crud, #{
             module => cx_not_ready_reason
         }},
-        {"/api/v1/tenants/:tid/qualification-codes[/:id]", cx_handler_crud, #{
+        {"/api/v1/tenants/:tenant_id/qualification-codes[/:id]", cx_handler_crud, #{
             module => cx_qualification_code
         }},
-        {"/api/v1/tenants[/:tid]", cx_handler_tenants, #{}},
+        {"/api/v1/tenants[/:tenant_id]", cx_handler_tenants, #{}},
 
         %% agent operations — identity comes from the token, never the path
         {"/api/v1/agent/session", cx_handler_agent_session, #{}},

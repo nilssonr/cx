@@ -30,7 +30,7 @@
 
 -record(ws, {
     phase = unauth :: unauth | ready,
-    ctx :: #auth_ctx{} | undefined,
+    ctx :: #auth_context{} | undefined,
     auth_tref :: reference() | undefined,
     %% token expiry (ms since epoch) and the session_check timer
     exp_ms = 0 :: integer(),
@@ -112,7 +112,7 @@ websocket_info(
         false ->
             %% re-resolve the claims: user disabled/deleted closes the
             %% socket; role/permission changes refresh the live ctx
-            case cx_auth_claims:to_ctx(Ctx#auth_ctx.claims) of
+            case cx_auth_claims:to_ctx(Ctx#auth_context.claims) of
                 {ok, Ctx1} ->
                     State1 = State#ws{
                         ctx = Ctx1,
@@ -133,7 +133,7 @@ websocket_info({cx_event, {_T, QueueId, Media, Event}}, State = #ws{phase = read
             %% undetectable divergence; the client reconnects + resyncs
             {[{close, 4429, <<"slow_consumer">>}], State};
         false ->
-            UserId = (State#ws.ctx)#auth_ctx.user_id,
+            UserId = (State#ws.ctx)#auth_context.user_id,
             case cx_ws_protocol:relevant(Event, UserId) of
                 true ->
                     {[{text, cx_ws_protocol:event_frame(QueueId, Media, Event)}], State};
@@ -169,11 +169,11 @@ authenticate(Token, DeviceId, State) ->
     case cx_auth:authenticate(Token) of
         {error, unauthorized} ->
             {[{close, 4401, <<"unauthorized">>}], State};
-        {ok, #auth_ctx{user_id = undefined}} ->
+        {ok, #auth_context{user_id = undefined}} ->
             %% valid token without an agent identity (integrator
             %% credentials) — nothing to deliver, nothing to register
             {[{close, 4403, <<"no_agent_identity">>}], State};
-        {ok, Ctx = #auth_ctx{tenant_id = T, user_id = UserId, claims = Claims}} ->
+        {ok, Ctx = #auth_context{tenant_id = T, user_id = UserId, claims = Claims}} ->
             cancel_auth_timer(State#ws.auth_tref),
             %% exp is required by cx_auth_jwt:validate_claims; if it is
             %% somehow absent, fail closed as already-expired

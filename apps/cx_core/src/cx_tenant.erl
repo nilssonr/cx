@@ -32,7 +32,7 @@ create(Ctx, Params) ->
     end.
 
 %% Anyone may read their own tenant; reading others needs tenants:admin.
-get(#auth_ctx{tenant_id = TenantId}, TenantId) ->
+get(#auth_context{tenant_id = TenantId}, TenantId) ->
     fetch_map(TenantId);
 get(Ctx, TenantId) ->
     maybe

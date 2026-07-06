@@ -3,7 +3,7 @@
 %% Supervisor operations on OTHER agents' sign-in sessions — gated by
 %% agent:session:any, never part of the agent's own surface.
 %%
-%% DELETE /api/v1/tenants/:tid/users/:id/agent-session
+%% DELETE /api/v1/tenants/:tenant_id/users/:id/agent-session
 %%   force sign-out: engaged work requeues at original position, ACW
 %%   finalizes, pending offers are handed back. Idempotent.
 
@@ -14,12 +14,12 @@ init(Req0, Opts = #{ctx := Ctx0}) ->
         case
             {
                 cowboy_req:method(Req0),
-                cowboy_req:binding(tid, Req0),
+                cowboy_req:binding(tenant_id, Req0),
                 cowboy_req:binding(id, Req0)
             }
         of
-            {<<"DELETE">>, Tid, UserId} when is_binary(Tid), is_binary(UserId) ->
-                case cx_handler:scope_tenant(Ctx0, Tid) of
+            {<<"DELETE">>, TenantId, UserId} when is_binary(TenantId), is_binary(UserId) ->
+                case cx_handler:scope_tenant(Ctx0, TenantId) of
                     {ok, Ctx} -> cx_router:force_stop_session(Ctx, UserId);
                     Error -> Error
                 end;

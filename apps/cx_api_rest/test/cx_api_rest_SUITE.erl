@@ -78,10 +78,10 @@ unauthorized_paths(Config) ->
 admin_crud_roundtrip(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
     %% bootstrap: create the tenant itself
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Acme">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
 
     %% skill with tenant-defined levels
     {200, #{<<"id">> := SkillId}} =
@@ -107,7 +107,7 @@ admin_crud_roundtrip(Config) ->
             Admin,
             #{
                 <<"name">> => <<"Building permits">>,
-                <<"skill_reqs">> => [
+                <<"skill_requirements">> => [
                     #{
                         <<"skill_id">> => SkillId,
                         <<"min_rank">> => 1
@@ -230,7 +230,7 @@ admin_crud_roundtrip(Config) ->
         ),
     {409, #{<<"error">> := <<"in_use">>}} =
         req(Config, delete, Base ++ "/roles/" ++ binary_to_list(RoleId), Admin),
-    %% dropping the user is not enough — the queue's skill_reqs still
+    %% dropping the user is not enough — the queue's skill_requirements still
     %% hold the skill, so it stays blocked
     {204, _} = req(Config, delete, Base ++ "/users/" ++ binary_to_list(UserId), Admin),
     {409, #{<<"error">> := <<"in_use">>}} =
@@ -263,10 +263,10 @@ cross_tenant_forbidden(Config) ->
 
 agent_open_media_flow(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Flow">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
 
     MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
@@ -279,7 +279,7 @@ agent_open_media_flow(Config) ->
         ),
     Agent = user_token(
         Config,
-        Tid,
+        TenantId,
         <<"flow-agent">>,
         [
             <<"agent:session:self">>,
@@ -291,7 +291,7 @@ agent_open_media_flow(Config) ->
     ),
     Integrator = user_token(
         Config,
-        Tid,
+        TenantId,
         <<"flow-integrator">>,
         [
             <<"interactions:create">>,
@@ -373,10 +373,10 @@ agent_open_media_flow(Config) ->
 %% agent-side hard block — DELETE wrapup 409s until codes are PUT.
 qualification_wrapup_flow(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Qual">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
 
     %% tree CRUD via the generic handler
     {200, #{<<"id">> := TopicA, <<"parent_id">> := null}} =
@@ -399,14 +399,14 @@ qualification_wrapup_flow(Config) ->
             <<"wrapup_duration_ms">> => 60000,
             <<"qualification_required">> => true
         }),
-    Agent = user_token(Config, Tid, <<"qual-agent">>, [
+    Agent = user_token(Config, TenantId, <<"qual-agent">>, [
         <<"agent:session:self">>,
         <<"agent:ready:self">>,
         <<"agent:offers:self">>,
         <<"agent:interactions:self">>,
         <<"agent:wrapup:self">>
     ]),
-    Integrator = user_token(Config, Tid, <<"qual-integrator">>, [
+    Integrator = user_token(Config, TenantId, <<"qual-integrator">>, [
         <<"interactions:create">>,
         <<"interactions:read">>
     ]),
@@ -481,10 +481,10 @@ qualification_wrapup_flow(Config) ->
 %% the agent's own detailed list, and the structured ready map.
 read_surface_and_pagination(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Reads">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
     {200, #{<<"id">> := QueueId}} =
         req(Config, post, Base ++ "/queues", Admin, #{
             <<"name">> => <<"q">>,
@@ -494,11 +494,11 @@ read_surface_and_pagination(Config) ->
         req(Config, post, Base ++ "/not-ready-reasons", Admin, #{
             <<"name">> => <<"Lunch">>
         }),
-    Integrator = user_token(Config, Tid, <<"reads-integrator">>, [
+    Integrator = user_token(Config, TenantId, <<"reads-integrator">>, [
         <<"interactions:create">>,
         <<"interactions:read">>
     ]),
-    Agent = user_token(Config, Tid, <<"reads-agent">>, [
+    Agent = user_token(Config, TenantId, <<"reads-agent">>, [
         <<"agent:session:self">>,
         <<"agent:ready:self">>,
         <<"agent:offers:self">>,
@@ -629,16 +629,16 @@ read_surface_and_pagination(Config) ->
 
 integrator_cancel_rules(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"C">>}),
-    Admin = boss_token(Config, Tid),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
     MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(Config, post, Base ++ "/queues", Admin, #{<<"name">> => <<"q">>}),
     Integrator = user_token(
         Config,
-        Tid,
+        TenantId,
         <<"c-int">>,
         [
             <<"interactions:create">>,
@@ -695,10 +695,10 @@ integrator_cancel_rules(Config) ->
 
 forbidden_without_permission(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"F">>}),
-    Nobody = user_token(Config, Tid, <<"nobody">>, []),
-    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    Nobody = user_token(Config, TenantId, <<"nobody">>, []),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
     {403, _} = req(
         Config,
         post,
@@ -811,9 +811,9 @@ req(Config, Method, Path, Token, Body, _Opts) ->
 
 presence_roundtrip(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
-    {200, #{<<"id">> := Tid}} =
+    {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"P">>}),
-    User = user_token(Config, Tid, <<"presence-user">>, [<<"presence:set:self">>]),
+    User = user_token(Config, TenantId, <<"presence-user">>, [<<"presence:set:self">>]),
     {200, #{
         <<"state">> := <<"offline">>,
         <<"manual_state">> := <<"busy">>,

@@ -44,7 +44,7 @@
 can_route(
     #cx_routing_profile{
         max_total = MaxTotal,
-        media_caps = Caps,
+        media_capacities = Capacities,
         guards = Guards
     },
     Mix,
@@ -57,13 +57,13 @@ can_route(
             N -> Total + 1 =< N
         end,
     CapOk =
-        case Caps of
-            #{Media := Cap} -> maps:get(Media, Mix, 0) + 1 =< Cap;
+        case Capacities of
+            #{Media := Capacity} -> maps:get(Media, Mix, 0) + 1 =< Capacity;
             _ -> true
         end,
     Blocked = lists:any(
-        fun(#rp_guard{when_media = W, gte = Gte, block = Block}) ->
-            maps:get(W, Mix, 0) >= Gte andalso lists:member(Media, Block)
+        fun(#routing_profile_guard{when_media = W, at_least = AtLeast, block = Block}) ->
+            maps:get(W, Mix, 0) >= AtLeast andalso lists:member(Media, Block)
         end,
         Guards
     ),
@@ -73,12 +73,12 @@ can_route(
 %% step whose after_ms has elapsed replaces the base min_rank. Steps are
 %% sorted ascending and non-increasing in rank (validated at config
 %% write), so requirements only ever relax as an interaction waits.
--spec effective_requirements([#skill_req{}], non_neg_integer()) -> reqs().
-effective_requirements(SkillReqs, WaitedMs) ->
+-spec effective_requirements([#skill_requirement{}], non_neg_integer()) -> reqs().
+effective_requirements(SkillRequirements, WaitedMs) ->
     [
         {S, effective_rank(Base, Widening, WaitedMs)}
-     || #skill_req{skill_id = S, min_rank = Base, widening = Widening} <-
-            SkillReqs
+     || #skill_requirement{skill_id = S, min_rank = Base, widening = Widening} <-
+            SkillRequirements
     ].
 
 effective_rank(Base, Widening, WaitedMs) ->

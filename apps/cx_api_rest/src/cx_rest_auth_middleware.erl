@@ -1,7 +1,7 @@
 -module(cx_rest_auth_middleware).
 
 %% Cowboy middleware between router and handler: authenticates the Bearer
-%% token and injects #auth_ctx{} into the handler opts. Handlers never see
+%% token and injects #auth_context{} into the handler opts. Handlers never see
 %% unauthenticated requests (except cx_handler_health, which bypasses).
 
 -behaviour(cowboy_middleware).
