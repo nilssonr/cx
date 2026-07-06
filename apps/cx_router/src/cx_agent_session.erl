@@ -42,6 +42,18 @@
     qualified = false :: boolean()
 }).
 
+%% One pending (ringing) offer as this session sees it. expires_at is
+%% the queue-computed ring deadline (undefined = ring forever); the
+%% queue's timer is authoritative — this copy only feeds read surfaces.
+-record(offer, {
+    interaction_id :: binary(),
+    media :: binary(),
+    queue_key :: {binary(), binary()},
+    queue_pid :: pid(),
+    mon_ref :: reference(),
+    expires_at :: integer() | undefined
+}).
+
 -record(sess, {
     tenant :: binary(),
     agent_id :: binary(),
@@ -50,8 +62,8 @@
     ready = #{} :: #{binary() => ready | {not_ready, binary() | undefined}},
     %% InteractionId => #work{}
     work = #{} :: #{binary() => #work{}},
-    %% OfferId => {InteractionId, MediaTypeId, QueueKey, QueuePid, MonRef}
-    pending = #{} :: map(),
+    %% OfferId => #offer{}
+    pending = #{} :: #{binary() => #offer{}},
     %% [{OfferId, InteractionId}] most-recent-first, capped — serves
     %% retried accepts after the offer left `pending` (idempotency)
     recent_accepts = [] :: [{binary(), binary()}],
@@ -110,7 +122,8 @@ handle_event({call, From}, {offer, Offer}, _State, Data) ->
         interaction_id := IId,
         media := Media,
         queue_key := QueueKey,
-        queue_pid := QueuePid
+        queue_pid := QueuePid,
+        expires_at := ExpiresAt
     } = Offer,
     Routable =
         maps:get(Media, Data#sess.ready, undefined) =:= ready andalso
@@ -120,7 +133,14 @@ handle_event({call, From}, {offer, Offer}, _State, Data) ->
             MonRef = erlang:monitor(process, QueuePid),
             Pending = maps:put(
                 OfferId,
-                {IId, Media, QueueKey, QueuePid, MonRef},
+                #offer{
+                    interaction_id = IId,
+                    media = Media,
+                    queue_key = QueueKey,
+                    queue_pid = QueuePid,
+                    mon_ref = MonRef,
+                    expires_at = null_to_undef(ExpiresAt)
+                },
                 Data#sess.pending
             ),
             Data1 = Data#sess{pending = Pending},
@@ -131,7 +151,7 @@ handle_event({call, From}, {offer, Offer}, _State, Data) ->
     end;
 handle_event({call, From}, {pending_queue, OfferId}, _State, Data) ->
     case Data#sess.pending of
-        #{OfferId := {_, _, _, QueuePid, _}} ->
+        #{OfferId := #offer{queue_pid = QueuePid}} ->
             {keep_state_and_data, [{reply, From, {ok, QueuePid}}]};
         _ ->
             case lists:keyfind(OfferId, 1, Data#sess.recent_accepts) of
@@ -141,9 +161,25 @@ handle_event({call, From}, {pending_queue, OfferId}, _State, Data) ->
                     {keep_state_and_data, [{reply, From, {error, not_found}}]}
             end
     end;
+handle_event({call, From}, list_offers, _State, Data) ->
+    Offers = [
+        offer_to_map(OfferId, O)
+     || OfferId := O <- Data#sess.pending
+    ],
+    {keep_state_and_data, [{reply, From, {ok, Offers}}]};
+handle_event({call, From}, {get_offer, OfferId}, _State, Data) ->
+    case Data#sess.pending of
+        #{OfferId := O} ->
+            {keep_state_and_data, [{reply, From, {ok, offer_to_map(OfferId, O)}}]};
+        _ ->
+            {keep_state_and_data, [{reply, From, {error, not_found}}]}
+    end;
 handle_event(cast, {offer_accepted, OfferId}, _State, Data) ->
     case maps:take(OfferId, Data#sess.pending) of
-        {{IId, Media, QueueKey, _QueuePid, MonRef}, Pending} ->
+        {
+            #offer{interaction_id = IId, media = Media, queue_key = QueueKey, mon_ref = MonRef},
+            Pending
+        } ->
             erlang:demonitor(MonRef, [flush]),
             Data1 = Data#sess{
                 pending = Pending,
@@ -164,7 +200,7 @@ handle_event(cast, {offer_accepted, OfferId}, _State, Data) ->
     end;
 handle_event(cast, {offer_withdrawn, OfferId}, _State, Data) ->
     case maps:take(OfferId, Data#sess.pending) of
-        {{_, _, _, _, MonRef}, Pending} ->
+        {#offer{mon_ref = MonRef}, Pending} ->
             erlang:demonitor(MonRef, [flush]),
             Data1 = touch_idle(Data#sess{pending = Pending}),
             write_snapshot(Data1),
@@ -352,13 +388,8 @@ handle_event({call, From}, get_state, _State, Data) ->
         [IId || IId := #work{phase = P} <- Data#sess.work, P =:= Phase]
     end,
     Offers = [
-        #{
-            <<"offer_id">> => OfferId,
-            <<"interaction_id">> => IId,
-            <<"media_type">> => Media,
-            <<"queue_id">> => QueueId
-        }
-     || OfferId := {IId, Media, {_, QueueId}, _, _} <- Data#sess.pending
+        offer_to_map(OfferId, O)
+     || OfferId := O <- Data#sess.pending
     ],
     Info = #{
         <<"agent_id">> => Data#sess.agent_id,
@@ -406,7 +437,7 @@ handle_event({call, From}, stop_session, _State, Data) ->
                 Data#sess.work
             ),
             maps:foreach(
-                fun(OfferId, {_, _, _, QueuePid, _}) ->
+                fun(OfferId, #offer{queue_pid = QueuePid}) ->
                     gen_statem:cast(QueuePid, {reject_cast, OfferId})
                 end,
                 Data1#sess.pending
@@ -443,7 +474,7 @@ handle_event({call, From}, force_stop_session, _State, Data) ->
         Data#sess.work
     ),
     maps:foreach(
-        fun(OfferId, {_, _, _, QueuePid, _}) ->
+        fun(OfferId, #offer{queue_pid = QueuePid}) ->
             gen_statem:cast(QueuePid, {reject_cast, OfferId})
         end,
         Data1#sess.pending
@@ -455,7 +486,7 @@ handle_event({call, From}, force_stop_session, _State, Data) ->
 handle_event(info, {'DOWN', MonRef, process, _Pid, _Reason}, _State, Data) ->
     %% a queue died while we held offers from it — drop those reservations
     Pending = maps:filter(
-        fun(_, {_, _, _, _, Ref}) -> Ref =/= MonRef end,
+        fun(_, #offer{mon_ref = Ref}) -> Ref =/= MonRef end,
         Data#sess.pending
     ),
     case maps:size(Pending) =:= maps:size(Data#sess.pending) of
@@ -485,7 +516,7 @@ terminate(_Reason, _State, Data) ->
 mix_of(#sess{work = Work, pending = Pending}) ->
     Add = fun(Media, Acc) -> maps:update_with(Media, fun(N) -> N + 1 end, 1, Acc) end,
     Mix0 = maps:fold(fun(_, #work{media = Media}, Acc) -> Add(Media, Acc) end, #{}, Work),
-    maps:fold(fun(_, {_, Media, _, _, _}, Acc) -> Add(Media, Acc) end, Mix0, Pending).
+    maps:fold(fun(_, #offer{media = Media}, Acc) -> Add(Media, Acc) end, Mix0, Pending).
 
 touch_idle(Data = #sess{work = Work, pending = Pending}) ->
     case maps:size(Work) + maps:size(Pending) of
@@ -603,6 +634,23 @@ within_wrapup_cap({Tenant, QueueId}, StartedAt, Until) ->
         {error, not_found} ->
             true
     end.
+
+offer_to_map(OfferId, #offer{
+    interaction_id = IId,
+    media = Media,
+    queue_key = {_, QueueId},
+    expires_at = ExpiresAt
+}) ->
+    #{
+        <<"offer_id">> => OfferId,
+        <<"interaction_id">> => IId,
+        <<"media_type">> => Media,
+        <<"queue_id">> => QueueId,
+        <<"expires_at">> => cx_json:undef_to_null(ExpiresAt)
+    }.
+
+null_to_undef(null) -> undefined;
+null_to_undef(V) -> V.
 
 %% Structured on the way out, symmetric with the PUT body — clients
 %% never parse composite strings.

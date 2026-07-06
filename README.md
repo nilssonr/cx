@@ -136,6 +136,11 @@ finalized.
   inexpressible by construction.
 - Every domain operation is a plain function taking `#auth_ctx{}`;
   permissions are enforced in the domain, never in transports.
+- REST verbs: DELETE only removes a durable resource (CRUD entities,
+  the agent session); domain state transitions are `POST /:id/<verb>`
+  (accept, reject, cancel, complete, hold, resume, wrapup ops); PUT
+  replaces a named sub-resource value; GET is a snapshot read wherever
+  a client might rehydrate.
 - References are validated at write time (unknown skill/role/profile ids
   are 422) and deletes are blocked while referenced (409 `in_use`) —
   both checked inside the write/delete transaction.

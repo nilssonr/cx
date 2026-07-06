@@ -386,12 +386,21 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
     #{agent_id := AgentId, pid := AgentPid} = Snapshot,
     OfferId = cx_id:new(),
     IId = Item#witem.interaction_id,
+    %% the ring deadline travels WITH the offer so countdown UIs need no
+    %% queue-config knowledge; null = ring forever
+    OfferTimeout = (Data#qd.config)#cx_queue.offer_timeout_ms,
+    ExpiresAt =
+        case OfferTimeout of
+            infinity -> null;
+            Ms -> cx_time:now_ms() + Ms
+        end,
     Offer = #{
         offer_id => OfferId,
         interaction_id => IId,
         media => Item#witem.media,
         queue_key => {Data#qd.tenant, Data#qd.queue_id},
-        queue_pid => self()
+        queue_pid => self(),
+        expires_at => ExpiresAt
     },
     case
         try
@@ -430,11 +439,11 @@ offer_to_first([Snapshot | Rest], Item, Data, Offered) ->
                 #{
                     <<"interaction_id">> => IId,
                     <<"offer_id">> => OfferId,
-                    <<"agent_id">> => AgentId
+                    <<"agent_id">> => AgentId,
+                    <<"expires_at">> => ExpiresAt
                 }
             ),
             %% infinity = ring forever: gen_statem never arms the timer
-            OfferTimeout = (Data1#qd.config)#cx_queue.offer_timeout_ms,
             {
                 Data1,
                 [{{timeout, {offer, OfferId}}, OfferTimeout, expire}],

@@ -12,8 +12,8 @@
 -export([set_ready/3]).
 -export([create_interaction/2, cancel_interaction/2, get_interaction/2]).
 -export([list_interactions/2, agent_interactions/1]).
--export([accept_offer/2, reject_offer/2]).
--export([complete/2, hold/2, resume/2, qualify/3]).
+-export([accept_offer/2, reject_offer/2, list_offers/1, get_offer/2]).
+-export([complete/2, hold/2, resume/2, qualify/3, agent_interaction/2]).
 -export([extend_wrapup/3, finalize_wrapup/2]).
 
 -define(CALL_TIMEOUT, 10000).
@@ -160,6 +160,19 @@ list_interactions(Ctx = #auth_ctx{tenant_id = T}, Filters) ->
         }}
     end.
 
+%% One owned interaction (any phase, wrap-up included) through the
+%% agent's eyes. After finalize it leaves this surface — integrators
+%% keep the tenant-wide GET.
+agent_interaction(Ctx = #auth_ctx{tenant_id = T}, IId) ->
+    maybe
+        ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
+        {ok, Pid} ?= session_of(Ctx),
+        {ok, IIds} ?= call(Pid, list_work),
+        true ?= lists:member(IId, IIds) orelse {error, not_found},
+        {ok, Rec} ?= cx_store:read(cx_interaction, {T, IId}),
+        {ok, interaction_to_map(Rec)}
+    end.
+
 %% The agent's own interactions in full detail — the rehydration surface
 %% a reconnecting client uses instead of replaying missed events.
 agent_interactions(Ctx = #auth_ctx{tenant_id = T}) ->
@@ -299,6 +312,15 @@ reject_offer(Ctx, OfferId) ->
             Error -> Error
         end
     end.
+
+%% Snapshot reads of pending (ringing) offers — the REST rehydration
+%% path; the WS events remain the push path. Resolved offers are gone
+%% (404), by design: an offer is an attempt, not a durable resource.
+list_offers(Ctx) ->
+    interaction_op(Ctx, <<"agent:offers:self">>, list_offers).
+
+get_offer(Ctx, OfferId) ->
+    interaction_op(Ctx, <<"agent:offers:self">>, {get_offer, OfferId}).
 
 %% ---- owned-interaction operations ----
 

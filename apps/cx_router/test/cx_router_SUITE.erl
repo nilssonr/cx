@@ -817,10 +817,22 @@ accept_retry_idempotent(_Config) ->
             integrator(T),
             #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
-    {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
+    {ok, #{<<"offer_id">> := Offer1, <<"expires_at">> := ExpiresAt}} =
+        wait_data(offer_created),
+    %% a timed queue stamps a concrete ring deadline on the offer
+    ?assert(is_integer(ExpiresAt)),
+    {ok, #{<<"expires_at">> := ExpiresAt, <<"interaction_id">> := I1}} =
+        cx_router:get_offer(Agent, Offer1),
     {ok, #{<<"interaction_id">> := I1}} = cx_router:accept_offer(Agent, Offer1),
     {ok, #{<<"interaction_id">> := I1}} = cx_router:accept_offer(Agent, Offer1),
     ?assertEqual({error, expired}, cx_router:reject_offer(Agent, Offer1)),
+    %% resolved offers vanish from the read surface
+    ?assertEqual({error, not_found}, cx_router:get_offer(Agent, Offer1)),
+    {ok, []} = cx_router:list_offers(Agent),
+    %% the accepted interaction is readable through the agent's own eyes
+    {ok, #{<<"id">> := I1, <<"state">> := <<"active">>}} =
+        cx_router:agent_interaction(Agent, I1),
+    ?assertEqual({error, not_found}, cx_router:agent_interaction(Agent, <<"ghost">>)),
     ok = cx_router:complete(Agent, I1),
     ok.
 
@@ -1045,8 +1057,15 @@ infinite_ring_offer_stays_pending(_Config) ->
     %% no timeout fires — the offer is still pending well after any
     %% finite timer would have been noise at this scale
     ?assertEqual(timeout, wait_event(offer_timeout, 400)),
-    {ok, #{<<"pending_offers">> := [#{<<"offer_id">> := OfferId}]}} =
+    %% ring-forever offers carry no deadline
+    {ok, #{
+        <<"pending_offers">> := [
+            #{<<"offer_id">> := OfferId, <<"expires_at">> := null}
+        ]
+    }} =
         cx_router:get_session(Agent),
+    {ok, [#{<<"offer_id">> := OfferId}]} = cx_router:list_offers(Agent),
+    {ok, #{<<"expires_at">> := null}} = cx_router:get_offer(Agent, OfferId),
     {ok, _} = cx_router:accept_offer(Agent, OfferId),
     {ok, _} = wait_event(offer_accepted),
     ok = cx_router:complete(Agent, IId),

@@ -446,7 +446,7 @@ qualification_wrapup_flow(Config) ->
 
     %% finalize is blocked until codes are entered
     {409, #{<<"error">> := <<"qualification_required">>}} =
-        req(Config, delete, IPath ++ "/wrapup", Agent),
+        req(Config, post, IPath ++ "/wrapup/finalize", Agent, #{}),
     {422, _} =
         req(Config, put, IPath ++ "/qualifications", Agent, #{
             <<"qualification_ids">> => [<<"ghost">>]
@@ -455,7 +455,7 @@ qualification_wrapup_flow(Config) ->
         req(Config, put, IPath ++ "/qualifications", Agent, #{
             <<"qualification_ids">> => [TopicA1]
         }),
-    {204, _} = req(Config, delete, IPath ++ "/wrapup", Agent),
+    {204, _} = req(Config, post, IPath ++ "/wrapup/finalize", Agent, #{}),
 
     {200, #{
         <<"state">> := <<"completed">>,
@@ -566,6 +566,23 @@ read_surface_and_pagination(Config) ->
         <<"state">> => <<"ready">>
     }),
     {ok, OfferId} = poll_offer(Config, Agent),
+
+    %% offers have a snapshot read surface: list + single, with the
+    %% queue-computed ring deadline (default timeout -> integer)
+    {200, [
+        #{
+            <<"offer_id">> := OfferId,
+            <<"interaction_id">> := _,
+            <<"queue_id">> := QueueId,
+            <<"expires_at">> := ExpiresAt
+        }
+    ]} =
+        req(Config, get, "/api/v1/agent/offers", Agent),
+    ?assert(is_integer(ExpiresAt)),
+    {200, #{<<"offer_id">> := OfferId}} =
+        req(Config, get, "/api/v1/agent/offers/" ++ binary_to_list(OfferId), Agent),
+    {404, _} = req(Config, get, "/api/v1/agent/offers/ghost", Agent),
+
     {200, #{<<"interaction_id">> := Mine}} =
         req(
             Config,
@@ -574,8 +591,40 @@ read_surface_and_pagination(Config) ->
             Agent,
             #{}
         ),
+    %% a resolved offer is gone — an attempt, not a durable resource
+    %% (the unlimited agent gets offered the NEXT queued interaction
+    %% immediately, so the list isn't empty; the resolved id is absent)
+    {200, OffersAfter} = req(Config, get, "/api/v1/agent/offers", Agent),
+    ?assertNot(
+        lists:any(
+            fun(#{<<"offer_id">> := O}) -> O =:= OfferId end,
+            OffersAfter
+        )
+    ),
+    {404, _} = req(
+        Config,
+        get,
+        "/api/v1/agent/offers/" ++ binary_to_list(OfferId),
+        Agent
+    ),
+
     {200, [#{<<"id">> := Mine, <<"state">> := <<"active">>, <<"queue_id">> := QueueId}]} =
         req(Config, get, "/api/v1/agent/interactions", Agent),
+    %% single own-interaction view, 404 for anything not currently owned
+    {200, #{<<"id">> := Mine, <<"state">> := <<"active">>}} =
+        req(
+            Config,
+            get,
+            "/api/v1/agent/interactions/" ++ binary_to_list(Mine),
+            Agent
+        ),
+    [NotMine | _] = [I || I <- Ids, I =/= Mine],
+    {404, _} = req(
+        Config,
+        get,
+        "/api/v1/agent/interactions/" ++ binary_to_list(NotMine),
+        Agent
+    ),
     ok.
 
 integrator_cancel_rules(Config) ->
@@ -607,10 +656,14 @@ integrator_cancel_rules(Config) ->
             #{<<"queue_id">> => QueueId, <<"media_type">> => MediaId}
         ),
     Path = "/api/v1/interactions/" ++ binary_to_list(IId),
-    {204, _} = req(Config, delete, Path, Integrator),
+    %% cancel is a state transition, not a resource removal: POST verb,
+    %% and the row remains readable as `cancelled`
+    {204, _} = req(Config, post, Path ++ "/cancel", Integrator, #{}),
     {200, #{<<"state">> := <<"cancelled">>}} = req(Config, get, Path, Integrator),
     {409, #{<<"error">> := <<"not_cancellable">>}} =
-        req(Config, delete, Path, Integrator),
+        req(Config, post, Path ++ "/cancel", Integrator, #{}),
+    %% the old DELETE is gone
+    {405, _} = req(Config, delete, Path, Integrator),
 
     %% unknown queue -> 404, closed queue -> 409
     {404, _} = req(

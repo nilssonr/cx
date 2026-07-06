@@ -100,7 +100,7 @@ echo "offers during wrap-up: $PENDING (expected 0)"
 [ "$PENDING" = "0" ] || exit 1
 
 echo "== finalize the wrap-up -> offer flows"
-req "$AGENT_TOKEN" DELETE "/api/v1/agent/interactions/$IID/wrapup"
+req "$AGENT_TOKEN" POST "/api/v1/agent/interactions/$IID/wrapup/finalize"
 OFFER2=""
 for _ in $(seq 1 50); do
     OFFER2=$(req "$AGENT_TOKEN" GET /api/v1/agent/session \

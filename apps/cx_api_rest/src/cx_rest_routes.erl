@@ -1,5 +1,15 @@
 -module(cx_rest_routes).
 
+%% Verb rule (hold every new route to it):
+%%   DELETE  only where a durable resource ceases to exist (CRUD
+%%           entities, the agent session). A DELETE whose target stays
+%%           GETtable is a lie.
+%%   POST /:id/<verb>  for every domain state transition (accept,
+%%           reject, cancel, complete, hold, resume, wrapup ops).
+%%   PUT     replaces a named sub-resource value in full (media state,
+%%           qualifications, presence).
+%%   GET     snapshot reads wherever a client might rehydrate.
+
 -export([dispatch/0]).
 
 dispatch() ->
@@ -36,9 +46,14 @@ routes() ->
         %% agent operations — identity comes from the token, never the path
         {"/api/v1/agent/session", cx_h_agent_session, #{}},
         {"/api/v1/agent/media/:media_type/state", cx_h_agent_ready, #{}},
-        {"/api/v1/agent/offers/:offer_id/accept", cx_h_agent_offer, #{op => accepted}},
-        {"/api/v1/agent/offers/:offer_id/reject", cx_h_agent_offer, #{op => rejected}},
+        {"/api/v1/agent/offers", cx_h_agent_offers, #{op => list}},
+        {"/api/v1/agent/offers/:offer_id", cx_h_agent_offers, #{op => get}},
+        {"/api/v1/agent/offers/:offer_id/accept", cx_h_agent_offers, #{op => accepted}},
+        {"/api/v1/agent/offers/:offer_id/reject", cx_h_agent_offers, #{op => rejected}},
         {"/api/v1/agent/interactions", cx_h_agent_interactions, #{op => list}},
+        {"/api/v1/agent/interactions/:interaction_id", cx_h_agent_interactions, #{
+            op => get
+        }},
         {"/api/v1/agent/interactions/:interaction_id/complete", cx_h_agent_interactions, #{
             op => complete
         }},
@@ -54,10 +69,11 @@ routes() ->
         {"/api/v1/agent/interactions/:interaction_id/wrapup/extend", cx_h_agent_interactions, #{
             op => wrapup_extend
         }},
-        {"/api/v1/agent/interactions/:interaction_id/wrapup", cx_h_agent_interactions, #{
-            op => wrapup
+        {"/api/v1/agent/interactions/:interaction_id/wrapup/finalize", cx_h_agent_interactions, #{
+            op => wrapup_finalize
         }},
 
         %% integrator surface — Open Media rides on this
+        {"/api/v1/interactions/:id/cancel", cx_h_interactions, #{op => cancel}},
         {"/api/v1/interactions[/:id]", cx_h_interactions, #{}}
     ].
