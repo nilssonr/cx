@@ -256,7 +256,11 @@ handle_event({call, From}, {complete, InteractionId}, _State, Data) ->
         #{InteractionId := W = #work{phase = Phase}} when Phase =:= active; Phase =:= held ->
             Now = cx_time:now_ms(),
             {WrapupMs, QRequired} = wrapup_policy(W#work.queue_key),
-            case WrapupMs > 0 of
+            %% qualification-required work enters ACW even with a zero
+            %% window (Until = Now: the 0 timer fires straight into the
+            %% hard block) — a shrunk wrap-up window must not disable
+            %% the tenant's mandatory-codes policy
+            case WrapupMs > 0 orelse QRequired of
                 true ->
                     Until = Now + WrapupMs,
                     case

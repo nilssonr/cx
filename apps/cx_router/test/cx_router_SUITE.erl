@@ -23,6 +23,7 @@
     qualification_gate/1,
     wrapup_extend_when_overdue_blocked/1,
     complete_retry_during_wrapup_idempotent/1,
+    zero_wrapup_qualification_still_gates/1,
     stop_session_rules/1,
     accept_retry_idempotent/1,
     force_sign_out_requeues/1,
@@ -52,6 +53,7 @@ all() ->
         qualification_gate,
         wrapup_extend_when_overdue_blocked,
         complete_retry_during_wrapup_idempotent,
+        zero_wrapup_qualification_still_gates,
         stop_session_rules,
         accept_retry_idempotent,
         force_sign_out_requeues,
@@ -809,6 +811,52 @@ complete_retry_during_wrapup_idempotent(_Config) ->
 
     ok = cx_router:finalize_wrapup(Agent, I1),
     {ok, _} = wait_data(interaction_completed),
+    ok = cx_router:stop_session(Agent),
+    ok.
+
+%% wrapup_duration_ms = 0 with qualification_required = true must still
+%% gate: complete enters a zero-width ACW that the hard block holds
+%% until codes arrive. The combo is forged with a direct Mnesia write
+%% because queue validation rejects it at the API.
+zero_wrapup_qualification_still_gates(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    {ok, #{<<"id">> := Code}} =
+        cx_qualification_code:create(Admin, #{<<"name">> => <<"Topic">>}),
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 300,
+        <<"qualification_required">> => true
+    }),
+    {ok, QueueRec} = cx_queue:fetch(T, QueueId),
+    ok = mnesia:dirty_write(QueueRec#cx_queue{wrapup_duration_ms = 0}),
+
+    UserId = user(Admin, #{}, undefined),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            integrator(T),
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
+
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(Agent, I1),
+    {ok, _} = wait_event(wrapup_started),
+    %% the zero-width timer fired against the block: no finalize
+    ?assertEqual(timeout, wait_event(wrapup_ended, 300)),
+    ?assertEqual(
+        {error, qualification_required},
+        cx_router:finalize_wrapup(Agent, I1)
+    ),
+    ?assertEqual({error, qualification_required}, cx_router:stop_session(Agent)),
+
+    %% entering codes releases the overdue zero-width ACW
+    ok = cx_router:qualify(Agent, I1, #{<<"qualification_ids">> => [Code]}),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
     ok = cx_router:stop_session(Agent),
     ok.
 
