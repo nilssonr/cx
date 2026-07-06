@@ -27,17 +27,18 @@
 -export([callback_mode/0, init/1, handle_event/4, terminate/3]).
 
 %% One owned interaction (accepted offer) and its lifecycle phase.
-%% qualification_required snapshots the queue's qualification_required at ACW entry
-%% (mid-flight config changes don't retroactively trap an agent);
-%% qualified tracks whether the interaction currently carries codes —
-%% authoritative here because every qualification write flows through
-%% this process.
+%% qualification_required and wrapup_max_ms snapshot the queue's policy
+%% at ACW entry (mid-flight config changes don't retroactively trap an
+%% agent or move their cap); qualified tracks whether the interaction
+%% currently carries codes — authoritative here because every
+%% qualification write flows through this process.
 -record(work, {
     media :: binary(),
     queue_key :: {binary(), binary()},
     phase = active :: active | held | wrapup,
     wrapup_started_at :: integer() | undefined,
     wrapup_until :: integer() | undefined,
+    wrapup_max_ms :: pos_integer() | infinity | undefined,
     qualification_required = false :: boolean(),
     qualified = false :: boolean()
 }).
@@ -258,7 +259,7 @@ handle_event({call, From}, {complete, InteractionId}, _State, Data) ->
             ]};
         (W = #work{phase = Phase}) when Phase =:= active; Phase =:= held ->
             Now = cx_time:now_ms(),
-            {WrapupMs, QRequired} = wrapup_policy(W#work.queue_key),
+            {WrapupMs, WrapupMaxMs, QRequired} = wrapup_policy(W#work.queue_key),
             %% qualification-required work enters ACW even with a zero
             %% window (Until = Now: the 0 timer fires straight into the
             %% hard block) — a shrunk wrap-up window must not disable
@@ -277,6 +278,7 @@ handle_event({call, From}, {complete, InteractionId}, _State, Data) ->
                                 phase = wrapup,
                                 wrapup_started_at = Now,
                                 wrapup_until = Until,
+                                wrapup_max_ms = WrapupMaxMs,
                                 qualification_required = QRequired
                             },
                             Data1 = put_work(InteractionId, W1, Data),
@@ -311,7 +313,7 @@ handle_event({call, From}, {extend_wrapup, InteractionId, Ms}, _State, Data) ->
             Now = cx_time:now_ms(),
             StartedAt = W#work.wrapup_started_at,
             Until = Until0 + Ms,
-            case within_wrapup_cap(W#work.queue_key, StartedAt, Until) of
+            case within_wrapup_cap(W, StartedAt, Until) of
                 true ->
                     case set_state(Data, InteractionId, wrapup, wrapup, #{wrapup_until => Until}) of
                         ok ->
@@ -688,10 +690,14 @@ requeue_row(#agent_session{tenant = Tenant}, InteractionId) ->
 
 wrapup_policy({Tenant, QueueId}) ->
     case cx_queue:fetch(Tenant, QueueId) of
-        {ok, #cx_queue{wrapup_duration_ms = Ms, qualification_required = QR}} ->
-            {Ms, QR};
+        {ok, Queue = #cx_queue{}} ->
+            {
+                Queue#cx_queue.wrapup_duration_ms,
+                Queue#cx_queue.wrapup_max_ms,
+                Queue#cx_queue.qualification_required
+            };
         {error, not_found} ->
-            {0, false}
+            {0, infinity, false}
     end.
 
 %% An overdue ACW (timer already fired against the qualification block)
@@ -714,15 +720,13 @@ maybe_release_overdue(
 maybe_release_overdue(Data, _IId, _W, From) ->
     {keep_state, Data, [{reply, From, ok}]}.
 
-within_wrapup_cap({Tenant, QueueId}, StartedAt, Until) ->
-    case cx_queue:fetch(Tenant, QueueId) of
-        {ok, #cx_queue{wrapup_max_ms = infinity}} ->
-            true;
-        {ok, #cx_queue{wrapup_max_ms = Max}} ->
-            is_integer(StartedAt) andalso Until - StartedAt =< Max;
-        {error, not_found} ->
-            true
-    end.
+%% Pure check on the cap snapshotted at ACW entry — no queue fetch per
+%% extend, and a mid-flight config change doesn't move a running cap.
+within_wrapup_cap(#work{wrapup_max_ms = Max}, StartedAt, Until) when is_integer(Max) ->
+    is_integer(StartedAt) andalso Until - StartedAt =< Max;
+within_wrapup_cap(_W, _StartedAt, _Until) ->
+    %% infinity, or a work record predating ACW entry — uncapped
+    true.
 
 offer_to_map(OfferId, #pending_offer{
     interaction_id = InteractionId,
