@@ -16,8 +16,14 @@
     agent_crash_requeues/1,
     queue_restart_preserves_order/1,
     cancel_rules/1,
-    wrapup_extend_cancel/1,
+    wrapup_extend_finalize/1,
+    wrapup_gates_only_its_media/1,
+    wrapup_cap_enforced/1,
+    hold_occupies_capacity/1,
+    qualification_gate/1,
     stop_session_rules/1,
+    accept_retry_idempotent/1,
+    force_sign_out_requeues/1,
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
@@ -37,8 +43,14 @@ all() ->
         agent_crash_requeues,
         queue_restart_preserves_order,
         cancel_rules,
-        wrapup_extend_cancel,
+        wrapup_extend_finalize,
+        wrapup_gates_only_its_media,
+        wrapup_cap_enforced,
+        hold_occupies_capacity,
+        qualification_gate,
         stop_session_rules,
+        accept_retry_idempotent,
+        force_sign_out_requeues,
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
@@ -82,7 +94,11 @@ happy_path_with_wrapup(_Config) ->
         <<"name">> => <<"Building permits">>,
         <<"wrapup_duration_ms">> => 700
     }),
-    UserId = user(Admin, #{}, undefined),
+    %% capacity 1: after-call work occupies the slot, so it gates the
+    %% next offer purely through the profile (an uncapped agent is
+    %% deliberately never blocked by ACW)
+    ProfileId = profile(Admin, #{<<"name">> => <<"one">>, <<"max_total">> => 1}),
+    UserId = user(Admin, #{}, ProfileId),
     Agent = start_agent(T, UserId),
     ok = cx_router:set_ready(Agent, Media, ready),
 
@@ -103,7 +119,7 @@ happy_path_with_wrapup(_Config) ->
     {ok, #{<<"offer_id">> := OfferId, <<"interaction_id">> := I1}} =
         wait_data(offer_created),
 
-    ok = cx_router:accept_offer(Agent, OfferId),
+    {ok, _} = cx_router:accept_offer(Agent, OfferId),
     {ok, _} = wait_event(offer_accepted),
     {ok, #{
         <<"state">> := <<"active">>,
@@ -111,13 +127,13 @@ happy_path_with_wrapup(_Config) ->
     }} =
         cx_router:get_interaction(Integrator, I1),
 
-    ok = cx_router:complete(Agent, I1),
-    {ok, _} = wait_event(interaction_completed),
+    {ok, #{<<"state">> := <<"wrapup">>, <<"wrapup_until">> := _}} =
+        cx_router:complete(Agent, I1),
     {ok, _} = wait_event(wrapup_started),
-    {ok, #{<<"state">> := <<"completed">>}} =
+    {ok, #{<<"state">> := <<"wrapup">>}} =
         cx_router:get_interaction(Integrator, I1),
 
-    %% wrap-up blocks new offers until it expires
+    %% the interaction's ACW occupies the slot until it expires
     {ok, #{<<"id">> := _I2}} =
         cx_router:create_interaction(
             Integrator,
@@ -125,6 +141,9 @@ happy_path_with_wrapup(_Config) ->
         ),
     ?assertEqual(timeout, wait_event(offer_created, 300)),
     {ok, _} = wait_event(wrapup_ended, 2000),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
+    {ok, #{<<"state">> := <<"completed">>}} =
+        cx_router:get_interaction(Integrator, I1),
     {ok, _} = wait_event(offer_created, 2000),
     ok.
 
@@ -164,7 +183,7 @@ multi_concurrent_offers(_Config) ->
         end
      || _ <- [1, 2, 3]
     ],
-    [ok = cx_router:accept_offer(Agent, O) || O <- Offers],
+    [{ok, _} = cx_router:accept_offer(Agent, O) || O <- Offers],
     {ok, #{<<"active">> := Active}} = cx_router:get_session(Agent),
     ?assertEqual(lists:sort(Ids), lists:sort(Active)),
     ok.
@@ -323,7 +342,7 @@ guard_blocks_media(_Config) ->
             #{<<"queue_id">> => QueueId, <<"media_type">> => Voice}
         ),
     {ok, #{<<"offer_id">> := VOffer}} = wait_data(offer_created),
-    ok = cx_router:accept_offer(Agent, VOffer),
+    {ok, _} = cx_router:accept_offer(Agent, VOffer),
     {ok, _} = wait_event(offer_accepted),
 
     {ok, #{<<"id">> := _IOm}} =
@@ -368,7 +387,7 @@ not_ready_mid_offer(_Config) ->
         ),
     ?assertEqual(timeout, wait_event(offer_created, 300)),
 
-    ok = cx_router:accept_offer(Agent, Offer1),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
     {ok, #{<<"state">> := <<"active">>}} =
         cx_router:get_interaction(Integrator, I1),
     ok.
@@ -491,7 +510,7 @@ cancel_rules(_Config) ->
     ),
     ok.
 
-wrapup_extend_cancel(_Config) ->
+wrapup_extend_finalize(_Config) ->
     T = cx_id:new(),
     Admin = admin(T),
     ok = cx_event:subscribe(T),
@@ -500,12 +519,13 @@ wrapup_extend_cancel(_Config) ->
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 60000
     }),
-    UserId = user(Admin, #{}, undefined),
+    ProfileId = profile(Admin, #{<<"name">> => <<"one">>, <<"max_total">> => 1}),
+    UserId = user(Admin, #{}, ProfileId),
     Agent = start_agent(T, UserId),
     ok = cx_router:set_ready(Agent, Media, ready),
 
-    ?assertEqual({error, not_in_wrapup}, cx_router:extend_wrapup(Agent, 1000)),
-    ?assertEqual({error, not_in_wrapup}, cx_router:cancel_wrapup(Agent)),
+    ?assertEqual({error, not_found}, cx_router:extend_wrapup(Agent, <<"ghost">>, 1000)),
+    ?assertEqual({error, not_found}, cx_router:finalize_wrapup(Agent, <<"ghost">>)),
 
     Integrator = integrator(T),
     {ok, #{<<"id">> := I1}} =
@@ -514,22 +534,237 @@ wrapup_extend_cancel(_Config) ->
             #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
-    ok = cx_router:accept_offer(Agent, Offer1),
-    ok = cx_router:complete(Agent, I1),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
+
+    %% wrap-up operations are per interaction and phase-guarded
+    ?assertEqual({error, not_in_wrapup}, cx_router:extend_wrapup(Agent, I1, 1000)),
+    ?assertEqual({error, not_in_wrapup}, cx_router:finalize_wrapup(Agent, I1)),
+
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(Agent, I1),
     {ok, _} = wait_event(wrapup_started),
 
-    ok = cx_router:extend_wrapup(Agent, 60000),
-    {ok, _} = wait_event(wrapup_extended),
+    ok = cx_router:extend_wrapup(Agent, I1, 60000),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(wrapup_extended),
 
-    %% no offers while wrapped up
+    %% the ACW slot blocks offers of this media at capacity 1
     {ok, _} = cx_router:create_interaction(
         Integrator,
         #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
     ),
     ?assertEqual(timeout, wait_event(offer_created, 300)),
 
-    ok = cx_router:cancel_wrapup(Agent),
+    ok = cx_router:finalize_wrapup(Agent, I1),
     {ok, _} = wait_event(wrapup_cancelled),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
+    {ok, _} = wait_event(offer_created, 2000),
+    ok.
+
+%% After-call work gates ONLY its own media (through the mix + media
+%% cap) — a chat in ACW must not block a voice offer.
+wrapup_gates_only_its_media(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Chat = <<"chat">>,
+    Voice = <<"voice">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 60000
+    }),
+    ProfileId = profile(Admin, #{
+        <<"name">> => <<"capped-chat">>,
+        <<"media_caps">> => #{Chat => 1}
+    }),
+    UserId = user(Admin, #{}, ProfileId),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Chat, ready),
+    ok = cx_router:set_ready(Agent, Voice, ready),
+
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := IChat}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Chat}
+        ),
+    {ok, #{<<"offer_id">> := ChatOffer}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(Agent, ChatOffer),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(Agent, IChat),
+    {ok, _} = wait_event(wrapup_started),
+
+    %% chat is blocked by its ACW slot...
+    {ok, _} = cx_router:create_interaction(
+        Integrator,
+        #{<<"queue_id">> => QueueId, <<"media_type">> => Chat}
+    ),
+    ?assertEqual(timeout, wait_event(offer_created, 300)),
+
+    %% ...but voice flows
+    {ok, #{<<"id">> := IVoice}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Voice}
+        ),
+    {ok, #{<<"interaction_id">> := IVoice}} = wait_data(offer_created, 2000),
+    ok.
+
+%% wrapup_max_ms caps TOTAL ACW per interaction (initial + extensions).
+wrapup_cap_enforced(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 30000,
+        <<"wrapup_max_ms">> => 40000
+    }),
+    UserId = user(Admin, #{}, undefined),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            integrator(T),
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(Agent, I1),
+
+    %% 30000 + 10000 = 40000 <= cap
+    ok = cx_router:extend_wrapup(Agent, I1, 10000),
+    %% one more ms would exceed it
+    ?assertEqual(
+        {error, wrapup_cap_exceeded},
+        cx_router:extend_wrapup(Agent, I1, 1)
+    ),
+    ok = cx_router:finalize_wrapup(Agent, I1),
+    ok.
+
+%% A qualification-required queue hard-blocks ACW finalize (timer,
+%% DELETE and sign-out) until the interaction carries codes; entering
+%% them releases an overdue wrap-up immediately. Interior tree nodes
+%% are selectable.
+qualification_gate(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    {ok, #{<<"id">> := TopicA}} =
+        cx_qualification_code:create(Admin, #{<<"name">> => <<"Topic A">>}),
+    {ok, #{<<"id">> := _TopicA1}} =
+        cx_qualification_code:create(Admin, #{
+            <<"name">> => <<"Topic A.1">>,
+            <<"parent_id">> => TopicA
+        }),
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 300,
+        <<"qualification_required">> => true
+    }),
+    UserId = user(Admin, #{}, undefined),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
+
+    ?assertEqual(
+        {error, {invalid, <<"qualification_ids">>}},
+        cx_router:qualify(Agent, I1, #{<<"qualification_ids">> => [<<"ghost">>]})
+    ),
+
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(Agent, I1),
+    {ok, _} = wait_event(wrapup_started),
+
+    %% the 300 ms timer fires against the block: no finalize
+    ?assertEqual(timeout, wait_event(wrapup_ended, 600)),
+    ?assertEqual(
+        {error, qualification_required},
+        cx_router:finalize_wrapup(Agent, I1)
+    ),
+    ?assertEqual({error, qualification_required}, cx_router:stop_session(Agent)),
+
+    %% an interior node qualifies; entering codes releases the overdue ACW
+    ok = cx_router:qualify(Agent, I1, #{<<"qualification_ids">> => [TopicA]}),
+    {ok, #{<<"qualification_ids">> := [TopicA]}} = wait_data(interaction_qualified),
+    {ok, _} = wait_event(wrapup_ended),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
+    {ok, #{
+        <<"state">> := <<"completed">>,
+        <<"qualification_ids">> := [TopicA]
+    }} = cx_router:get_interaction(Integrator, I1),
+
+    %% qualifying EARLY (while still active) lets the timer finalize
+    {ok, #{<<"id">> := I2}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := Offer2}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(Agent, Offer2),
+    ok = cx_router:qualify(Agent, I2, #{<<"qualification_ids">> => [TopicA]}),
+    {ok, _} = wait_data(interaction_qualified),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(Agent, I2),
+    {ok, _} = wait_event(wrapup_ended, 2000),
+    {ok, #{<<"interaction_id">> := I2}} = wait_data(interaction_completed),
+
+    ok = cx_router:stop_session(Agent),
+    ok.
+
+%% Held interactions keep occupying capacity; hold/resume are
+%% phase-guarded; complete is legal straight from held.
+hold_occupies_capacity(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 0
+    }),
+    ProfileId = profile(Admin, #{<<"name">> => <<"one">>, <<"max_total">> => 1}),
+    UserId = user(Admin, #{}, ProfileId),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+
+    Integrator = integrator(T),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            Integrator,
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
+
+    ?assertEqual({error, not_held}, cx_router:resume(Agent, I1)),
+    ok = cx_router:hold(Agent, I1),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_held),
+    {ok, #{<<"state">> := <<"held">>}} = cx_router:get_interaction(Agent, I1),
+    ?assertEqual({error, not_active}, cx_router:hold(Agent, I1)),
+
+    %% held still occupies the slot: nothing else is offered
+    {ok, _} = cx_router:create_interaction(
+        Integrator,
+        #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+    ),
+    ?assertEqual(timeout, wait_event(offer_created, 300)),
+
+    ok = cx_router:resume(Agent, I1),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_resumed),
+    {ok, #{<<"state">> := <<"active">>}} = cx_router:get_interaction(Agent, I1),
+
+    %% complete straight from held (caller hung up while parked)
+    ok = cx_router:hold(Agent, I1),
+    {ok, _} = wait_data(interaction_held),
+    ok = cx_router:complete(Agent, I1),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
     {ok, _} = wait_event(offer_created, 2000),
     ok.
 
@@ -544,7 +779,8 @@ stop_session_rules(_Config) ->
     }),
     UserId = user(Admin, #{}, undefined),
     Agent = start_agent(T, UserId),
-    ?assertEqual({error, already_started}, cx_router:start_session(Agent)),
+    %% sign-in is idempotent: a retried POST returns the live state
+    {ok, #{<<"agent_id">> := UserId}} = cx_router:start_session(Agent),
     ok = cx_router:set_ready(Agent, Media, ready),
 
     {ok, #{<<"id">> := I1}} =
@@ -553,12 +789,116 @@ stop_session_rules(_Config) ->
             #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
         ),
     {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
-    ok = cx_router:accept_offer(Agent, Offer1),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
     ?assertEqual({error, has_active_interactions}, cx_router:stop_session(Agent)),
 
     ok = cx_router:complete(Agent, I1),
+    %% a retried complete finds the row already completed by this agent
+    ok = cx_router:complete(Agent, I1),
     ok = cx_router:stop_session(Agent),
     ?assertEqual({error, no_session}, cx_router:set_ready(Agent, Media, ready)),
+    %% sign-out is idempotent too
+    ok = cx_router:stop_session(Agent),
+    ok.
+
+%% A retried accept is served from the tombstone: same interaction_id,
+%% while a late reject of the same offer is a stale race (expired).
+accept_retry_idempotent(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{<<"name">> => <<"q">>, <<"wrapup_duration_ms">> => 0}),
+    UserId = user(Admin, #{}, undefined),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            integrator(T),
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
+    {ok, #{<<"interaction_id">> := I1}} = cx_router:accept_offer(Agent, Offer1),
+    {ok, #{<<"interaction_id">> := I1}} = cx_router:accept_offer(Agent, Offer1),
+    ?assertEqual({error, expired}, cx_router:reject_offer(Agent, Offer1)),
+    ok = cx_router:complete(Agent, I1),
+    ok.
+
+%% Force sign-out: engaged work requeues at its original position (a
+%% second agent receives it), ACW finalizes past the qualification
+%% block, and the session ends.
+force_sign_out_requeues(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 60000,
+        <<"qualification_required">> => true
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+
+    Integrator = integrator(T),
+    [I1, I2] =
+        [
+            begin
+                {ok, #{<<"id">> := I}} =
+                    cx_router:create_interaction(
+                        Integrator,
+                        #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+                    ),
+                I
+            end
+         || _ <- [1, 2]
+        ],
+    {ok, #{<<"offer_id">> := O1, <<"interaction_id">> := I1}} =
+        wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    {ok, #{<<"offer_id">> := O2, <<"interaction_id">> := I2}} =
+        wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O2),
+
+    %% I2 sits unqualified in ACW (would block a normal sign-out), I1
+    %% is still engaged (held, to cover the held path too)
+    ok = cx_router:hold(AgentA, I1),
+    {ok, _} = wait_data(interaction_held),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(AgentA, I2),
+    {ok, _} = wait_event(wrapup_started),
+    %% normal sign-out refuses: engaged work wins the error precedence
+    %% (the unqualified-ACW refusal is covered in qualification_gate)
+    ?assertEqual({error, has_active_interactions}, cx_router:stop_session(AgentA)),
+
+    ok = cx_router:stop_session(AgentA, true),
+    {ok, _} = wait_event(session_ended),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_requeued, 2000),
+    {ok, #{<<"interaction_id">> := I2}} = wait_data(interaction_completed),
+    {ok, #{<<"state">> := <<"queued">>, <<"agent_id">> := null}} =
+        cx_router:get_interaction(Integrator, I1),
+
+    %% supervisor kick-out needs its own authority
+    NoAuthority = cx_authz:ctx(T, [<<"agent:session:self">>]),
+    ?assertEqual(
+        {error, forbidden},
+        cx_router:force_stop_session(NoAuthority, UserA)
+    ),
+    Supervisor = cx_authz:ctx(T, [<<"agent:session:any">>]),
+    %% idempotent: A is already gone
+    ok = cx_router:force_stop_session(Supervisor, UserA),
+
+    %% a second agent receives the requeued I1
+    UserB = user(Admin, #{}, undefined),
+    AgentB = start_agent(T, UserB),
+    ok = cx_router:set_ready(AgentB, Media, ready),
+    {ok, #{<<"interaction_id">> := I1, <<"agent_id">> := UserB}} =
+        wait_data(offer_created, 2000),
+
+    %% and the supervisor can kick a LIVE session
+    ok = cx_router:force_stop_session(Supervisor, UserB),
+    {ok, _} = wait_event(session_ended),
+    ?assertEqual({error, no_session}, cx_router:get_session(AgentB)),
     ok.
 
 %% A configured-but-missing routing profile must refuse the session —
@@ -586,7 +926,10 @@ facade_permissions(_Config) ->
         cx_router:create_interaction(NoPerms, #{})
     ),
     ?assertEqual({error, forbidden}, cx_router:accept_offer(NoPerms, <<"o">>)),
-    ?assertEqual({error, forbidden}, cx_router:cancel_wrapup(NoPerms)),
+    ?assertEqual({error, forbidden}, cx_router:complete(NoPerms, <<"i">>)),
+    ?assertEqual({error, forbidden}, cx_router:hold(NoPerms, <<"i">>)),
+    ?assertEqual({error, forbidden}, cx_router:resume(NoPerms, <<"i">>)),
+    ?assertEqual({error, forbidden}, cx_router:finalize_wrapup(NoPerms, <<"i">>)),
     ok.
 
 %% ---- helpers ----
@@ -668,7 +1011,7 @@ backlog_drains_one_offer_per_pass(_Config) ->
                 wait_data(offer_created),
             %% at most one offer per pass — nothing else until we accept
             ?assertEqual(timeout, wait_event(offer_created, 200)),
-            ok = cx_router:accept_offer(Agent, O),
+            {ok, _} = cx_router:accept_offer(Agent, O),
             {ok, _} = wait_event(offer_accepted),
             I
         end,
@@ -702,8 +1045,9 @@ infinite_ring_offer_stays_pending(_Config) ->
     %% no timeout fires — the offer is still pending well after any
     %% finite timer would have been noise at this scale
     ?assertEqual(timeout, wait_event(offer_timeout, 400)),
-    {ok, #{<<"pending_offers">> := [OfferId]}} = cx_router:get_session(Agent),
-    ok = cx_router:accept_offer(Agent, OfferId),
+    {ok, #{<<"pending_offers">> := [#{<<"offer_id">> := OfferId}]}} =
+        cx_router:get_session(Agent),
+    {ok, _} = cx_router:accept_offer(Agent, OfferId),
     {ok, _} = wait_event(offer_accepted),
     ok = cx_router:complete(Agent, IId),
     ok.
@@ -726,6 +1070,7 @@ agent_ctx(T, UserId) ->
             <<"agent:session:self">>,
             <<"agent:ready:self">>,
             <<"agent:offers:self">>,
+            <<"agent:interactions:self">>,
             <<"agent:wrapup:self">>,
             <<"interactions:read">>
         ]

@@ -16,7 +16,7 @@ open_media, social_media: hard-coded product concepts, each backing a
 distinct agent-app UI) lands on a media-agnostic **queue**, waits with
 its position
 preserved no matter what, and is offered to the best **agent** whose
-per-media **ready state**, **wrap-up** gate, tenant-defined ordinal
+per-media **ready state**, tenant-defined ordinal
 **skill levels** (no 1–100 theater) and configured **routing profile**
 (caps like "at most X total, of which Y chats" and guards like "if I'm on
 a call, no emails") admit it. No hard-coded capacity limits: an agent may
@@ -25,6 +25,17 @@ configuration allows it — agents may be humans, bots, or integrator
 nodes. Every transition publishes an event. AuthN is an external OIDC
 server (Zitadel) behind a seam; authZ is cx's own. Storage is Mnesia for
 now.
+
+An accepted interaction walks `active ⇄ held → wrapup → completed`:
+hold parks it without releasing capacity, and after-call work (wrap-up)
+is a phase OF the interaction — it keeps occupying its media slot in
+the agent's mix, which is the only way wrap-up ever gates routing (an
+uncapped agent is deliberately never blocked by it). Queues may require
+**qualification codes** (a tenant-defined tree, any node selectable)
+before wrap-up can finalize — entering codes is what releases the
+agent. Terminology: the *interaction* is the customer session; the
+*agent session* (`/api/v1/agent/session`) is the signed-in work session
+that makes an agent routable at all.
 
 ## Layout
 
@@ -115,8 +126,9 @@ io:format("~s~n", [Token]).
 Then drive the API with curl (see the walkthrough in `scripts/demo.sh`):
 create a tenant and queue; create a user with a role and a
 routing profile; start an agent session; go ready; POST an interaction;
-poll the session for the offer; accept; complete; watch wrap-up gate the
-next offer.
+poll the session for the offer; accept; complete; watch the
+interaction's after-call work occupy the capacity slot until it is
+finalized.
 
 ## Conventions
 

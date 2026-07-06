@@ -24,8 +24,10 @@ all() ->
 -spec tenant_assignable() -> [binary()].
 tenant_assignable() ->
     [
+        <<"agent:interactions:self">>,
         <<"agent:offers:self">>,
         <<"agent:ready:self">>,
+        <<"agent:session:any">>,
         <<"agent:session:self">>,
         <<"agent:wrapup:self">>,
         <<"interactions:cancel">>,
@@ -33,6 +35,7 @@ tenant_assignable() ->
         <<"interactions:read">>,
         <<"not_ready_reasons:write">>,
         <<"presence:set:self">>,
+        <<"qualification_codes:write">>,
         <<"queues:read">>,
         <<"queues:write">>,
         <<"roles:write">>,

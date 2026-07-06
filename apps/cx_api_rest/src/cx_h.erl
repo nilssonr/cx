@@ -38,6 +38,11 @@ status(already_started) -> 409;
 status(queue_closed) -> 409;
 status(has_active_interactions) -> 409;
 status(not_in_wrapup) -> 409;
+status(not_active) -> 409;
+status(not_held) -> 409;
+status(conflict) -> 409;
+status(wrapup_cap_exceeded) -> 409;
+status(qualification_required) -> 409;
 status({invalid, json}) -> 400;
 status({invalid, _Field}) -> 422;
 status(_) -> 500.

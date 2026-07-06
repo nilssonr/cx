@@ -22,14 +22,19 @@ create(Ctx = #auth_ctx{tenant_id = T}, Params) ->
                 <<"wrapup_duration_ms">>,
                 ?DEFAULT_WRAPUP_DURATION_MS
             ),
-        {ok, OfferMs} ?= opt_offer_timeout(Params, ?DEFAULT_OFFER_TIMEOUT_MS),
+        {ok, WrapupMaxMs} ?= opt_infinity_ms(Params, <<"wrapup_max_ms">>, infinity),
+        {ok, OfferMs} ?=
+            opt_infinity_ms(Params, <<"offer_timeout_ms">>, ?DEFAULT_OFFER_TIMEOUT_MS),
+        {ok, QualRequired} ?= opt_bool(Params, <<"qualification_required">>, false),
         {ok, Status} ?= cx_params:opt_atom(Params, <<"status">>, [open, closed], open),
         Rec = #cx_queue{
             key = {T, cx_id:new()},
             name = Name,
             skill_reqs = SkillReqs,
             wrapup_duration_ms = WrapupMs,
+            wrapup_max_ms = WrapupMaxMs,
             offer_timeout_ms = OfferMs,
+            qualification_required = QualRequired,
             status = Status
         },
         ok ?= write_checked(T, Rec),
@@ -67,7 +72,16 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
                 <<"wrapup_duration_ms">>,
                 Rec0#cx_queue.wrapup_duration_ms
             ),
-        {ok, OfferMs} ?= opt_offer_timeout(Params, Rec0#cx_queue.offer_timeout_ms),
+        {ok, WrapupMaxMs} ?=
+            opt_infinity_ms(Params, <<"wrapup_max_ms">>, Rec0#cx_queue.wrapup_max_ms),
+        {ok, OfferMs} ?=
+            opt_infinity_ms(Params, <<"offer_timeout_ms">>, Rec0#cx_queue.offer_timeout_ms),
+        {ok, QualRequired} ?=
+            opt_bool(
+                Params,
+                <<"qualification_required">>,
+                Rec0#cx_queue.qualification_required
+            ),
         {ok, Status} ?=
             cx_params:opt_atom(
                 Params,
@@ -79,7 +93,9 @@ update(Ctx = #auth_ctx{tenant_id = T}, QueueId, Params) ->
             name = Name,
             skill_reqs = SkillReqs,
             wrapup_duration_ms = WrapupMs,
+            wrapup_max_ms = WrapupMaxMs,
             offer_timeout_ms = OfferMs,
+            qualification_required = QualRequired,
             status = Status
         },
         ok ?= write_checked(T, Rec),
@@ -122,7 +138,9 @@ to_map(#cx_queue{
     name = Name,
     skill_reqs = SkillReqs,
     wrapup_duration_ms = WrapupMs,
+    wrapup_max_ms = WrapupMaxMs,
     offer_timeout_ms = OfferMs,
+    qualification_required = QualRequired,
     status = Status
 }) ->
     #{
@@ -130,24 +148,34 @@ to_map(#cx_queue{
         <<"name">> => Name,
         <<"skill_reqs">> => [skill_req_to_map(R) || R <- SkillReqs],
         <<"wrapup_duration_ms">> => WrapupMs,
-        <<"offer_timeout_ms">> => offer_timeout_to_json(OfferMs),
+        <<"wrapup_max_ms">> => infinity_ms_to_json(WrapupMaxMs),
+        <<"offer_timeout_ms">> => infinity_ms_to_json(OfferMs),
+        <<"qualification_required">> => QualRequired,
         <<"status">> => atom_to_binary(Status)
     }.
 
-%% Ring time in milliseconds; 0 means ring forever (the queue then
-%% never arms the offer timer). 0 is free to carry that meaning
-%% because a literal 0 ms offer could never be answered — internally
-%% it is stored as 'infinity' so the timer path needs no translation.
-opt_offer_timeout(Params, Default) ->
+opt_bool(Params, Key, Default) ->
     case Params of
-        #{<<"offer_timeout_ms">> := 0} -> {ok, infinity};
-        #{<<"offer_timeout_ms">> := V} when is_integer(V), V > 0 -> {ok, V};
-        #{<<"offer_timeout_ms">> := _} -> {error, {invalid, <<"offer_timeout_ms">>}};
+        #{Key := B} when is_boolean(B) -> {ok, B};
+        #{Key := _} -> {error, {invalid, Key}};
         _ -> {ok, Default}
     end.
 
-offer_timeout_to_json(infinity) -> 0;
-offer_timeout_to_json(Ms) -> Ms.
+%% Millisecond durations where 0 on the wire means "no limit"
+%% (offer_timeout_ms: ring forever; wrapup_max_ms: uncapped ACW). 0 is
+%% free to carry that meaning because a literal 0 ms value would be
+%% useless — internally it is stored as 'infinity' so timer and
+%% comparison paths need no translation.
+opt_infinity_ms(Params, Key, Default) ->
+    case Params of
+        #{Key := 0} -> {ok, infinity};
+        #{Key := V} when is_integer(V), V > 0 -> {ok, V};
+        #{Key := _} -> {error, {invalid, Key}};
+        _ -> {ok, Default}
+    end.
+
+infinity_ms_to_json(infinity) -> 0;
+infinity_ms_to_json(Ms) -> Ms.
 
 skill_req_to_map(#skill_req{
     skill_id = SkillId,

@@ -23,6 +23,9 @@ init(Req0, Opts = #{ctx := Ctx}) ->
         end,
     {ok, cx_h:reply(Result, Req1), Opts}.
 
+%% A reason on "ready" is a client bug — reject rather than drop it.
+parse_state(#{<<"state">> := <<"ready">>, <<"reason_id">> := _}) ->
+    {error, {invalid, <<"reason_id">>}};
 parse_state(#{<<"state">> := <<"ready">>}) ->
     {ok, ready};
 parse_state(#{<<"state">> := <<"not_ready">>} = Params) ->

@@ -19,6 +19,7 @@ routes() ->
         {"/api/v1/presence", cx_h_presence, #{}},
 
         %% admin CRUD — one generic handler, parameterized by entity module
+        {"/api/v1/tenants/:tid/users/:id/agent-session", cx_h_agent_admin, #{}},
         {"/api/v1/tenants/:tid/users[/:id]", cx_h_crud, #{module => cx_user}},
         {"/api/v1/tenants/:tid/roles[/:id]", cx_h_crud, #{module => cx_role}},
         {"/api/v1/tenants/:tid/skills[/:id]", cx_h_crud, #{module => cx_skill}},
@@ -27,16 +28,35 @@ routes() ->
         {"/api/v1/tenants/:tid/not-ready-reasons[/:id]", cx_h_crud, #{
             module => cx_not_ready_reason
         }},
+        {"/api/v1/tenants/:tid/qualification-codes[/:id]", cx_h_crud, #{
+            module => cx_qualification_code
+        }},
         {"/api/v1/tenants[/:tid]", cx_h_tenants, #{}},
 
         %% agent operations — identity comes from the token, never the path
         {"/api/v1/agent/session", cx_h_agent_session, #{}},
         {"/api/v1/agent/media/:media_type/state", cx_h_agent_ready, #{}},
-        {"/api/v1/agent/offers/:offer_id/accept", cx_h_offer, #{op => accepted}},
-        {"/api/v1/agent/offers/:offer_id/reject", cx_h_offer, #{op => rejected}},
-        {"/api/v1/agent/interactions/:id/complete", cx_h_agent_interaction, #{}},
-        {"/api/v1/agent/wrapup/extend", cx_h_wrapup, #{op => extend}},
-        {"/api/v1/agent/wrapup", cx_h_wrapup, #{op => cancel}},
+        {"/api/v1/agent/offers/:offer_id/accept", cx_h_agent_offer, #{op => accepted}},
+        {"/api/v1/agent/offers/:offer_id/reject", cx_h_agent_offer, #{op => rejected}},
+        {"/api/v1/agent/interactions", cx_h_agent_interactions, #{op => list}},
+        {"/api/v1/agent/interactions/:interaction_id/complete", cx_h_agent_interactions, #{
+            op => complete
+        }},
+        {"/api/v1/agent/interactions/:interaction_id/hold", cx_h_agent_interactions, #{
+            op => hold
+        }},
+        {"/api/v1/agent/interactions/:interaction_id/resume", cx_h_agent_interactions, #{
+            op => resume
+        }},
+        {"/api/v1/agent/interactions/:interaction_id/qualifications", cx_h_agent_interactions, #{
+            op => qualifications
+        }},
+        {"/api/v1/agent/interactions/:interaction_id/wrapup/extend", cx_h_agent_interactions, #{
+            op => wrapup_extend
+        }},
+        {"/api/v1/agent/interactions/:interaction_id/wrapup", cx_h_agent_interactions, #{
+            op => wrapup
+        }},
 
         %% integrator surface — Open Media rides on this
         {"/api/v1/interactions[/:id]", cx_h_interactions, #{}}

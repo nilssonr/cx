@@ -45,14 +45,18 @@ QUEUE=$(req "$BOSS_TOKEN" POST "$BASE/queues" \
       \"skill_reqs\":[{\"skill_id\":\"$SKILL\",\"min_rank\":1}]}" | field id)
 echo "media=$MEDIA skill=$SKILL queue=$QUEUE"
 
+echo "== routing profile (capacity 1 — after-call work occupies the slot)"
+PROFILE=$(req "$BOSS_TOKEN" POST "$BASE/routing-profiles" \
+    '{"name":"one-at-a-time","max_total":1}' | field id)
+
 echo "== roles + users (agent and integrator)"
 AGENT_ROLE=$(req "$BOSS_TOKEN" POST "$BASE/roles" \
-    '{"name":"Agent","permissions":["agent:session:self","agent:ready:self","agent:offers:self","agent:wrapup:self","presence:set:self"]}' | field id)
+    '{"name":"Agent","permissions":["agent:session:self","agent:ready:self","agent:offers:self","agent:interactions:self","agent:wrapup:self","presence:set:self"]}' | field id)
 INT_ROLE=$(req "$BOSS_TOKEN" POST "$BASE/roles" \
     '{"name":"Integrator","permissions":["interactions:create","interactions:cancel","interactions:read"]}' | field id)
 req "$BOSS_TOKEN" POST "$BASE/users" \
     "{\"name\":\"Demo Agent\",\"email\":\"agent@demo\",\"subject\":\"demo-agent\",
-      \"role_ids\":[\"$AGENT_ROLE\"],
+      \"role_ids\":[\"$AGENT_ROLE\"],\"routing_profile_id\":\"$PROFILE\",
       \"skills\":[{\"skill_id\":\"$SKILL\",\"rank\":2}]}" >/dev/null
 req "$BOSS_TOKEN" POST "$BASE/users" \
     "{\"name\":\"Demo Integrator\",\"email\":\"int@demo\",\"subject\":\"demo-integrator\",
@@ -73,7 +77,7 @@ echo "== agent polls for the offer"
 OFFER=""
 for _ in $(seq 1 50); do
     OFFER=$(req "$AGENT_TOKEN" GET /api/v1/agent/session \
-        | python3 -c 'import sys,json;o=json.load(sys.stdin)["pending_offers"];print(o[0] if o else "")')
+        | python3 -c 'import sys,json;o=json.load(sys.stdin)["pending_offers"];print(o[0]["offer_id"] if o else "")')
     [ -n "$OFFER" ] && break
     sleep 0.1
 done
@@ -86,7 +90,7 @@ req "$INTEGRATOR_TOKEN" GET "/api/v1/interactions/$IID"; echo
 req "$AGENT_TOKEN" POST "/api/v1/agent/interactions/$IID/complete"
 req "$INTEGRATOR_TOKEN" GET "/api/v1/interactions/$IID"; echo
 
-echo "== wrap-up gates the next offer"
+echo "== the interaction's after-call work occupies the slot"
 IID2=$(req "$INTEGRATOR_TOKEN" POST /api/v1/interactions \
     "{\"queue_id\":\"$QUEUE\",\"media_type\":\"$MEDIA\"}" | field id)
 sleep 1
@@ -95,16 +99,16 @@ PENDING=$(req "$AGENT_TOKEN" GET /api/v1/agent/session \
 echo "offers during wrap-up: $PENDING (expected 0)"
 [ "$PENDING" = "0" ] || exit 1
 
-echo "== cancel wrap-up -> offer flows"
-req "$AGENT_TOKEN" DELETE /api/v1/agent/wrapup
+echo "== finalize the wrap-up -> offer flows"
+req "$AGENT_TOKEN" DELETE "/api/v1/agent/interactions/$IID/wrapup"
 OFFER2=""
 for _ in $(seq 1 50); do
     OFFER2=$(req "$AGENT_TOKEN" GET /api/v1/agent/session \
-        | python3 -c 'import sys,json;o=json.load(sys.stdin)["pending_offers"];print(o[0] if o else "")')
+        | python3 -c 'import sys,json;o=json.load(sys.stdin)["pending_offers"];print(o[0]["offer_id"] if o else "")')
     [ -n "$OFFER2" ] && break
     sleep 0.1
 done
-[ -n "$OFFER2" ] || { echo "no offer after wrap-up cancel"; exit 1; }
+[ -n "$OFFER2" ] || { echo "no offer after wrap-up finalize"; exit 1; }
 req "$AGENT_TOKEN" POST "/api/v1/agent/offers/$OFFER2/accept"
 req "$AGENT_TOKEN" POST "/api/v1/agent/interactions/$IID2/complete"
 

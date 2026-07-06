@@ -2,6 +2,8 @@
 
 %% Integrator surface:
 %%   POST   /api/v1/interactions      {"queue_id", "media_type", "properties"}
+%%   GET    /api/v1/interactions      ?queue_id=&state=&media_type=&agent_id=
+%%                                    &limit=&after=   (cursor pagination)
 %%   GET    /api/v1/interactions/:id
 %%   DELETE /api/v1/interactions/:id  (cancel — only while queued)
 
@@ -20,6 +22,9 @@ dispatch(<<"POST">>, undefined, Ctx, Req) ->
     cx_h:with_body(Req, fun(Params) ->
         cx_router:create_interaction(Ctx, Params)
     end);
+dispatch(<<"GET">>, undefined, Ctx, Req) ->
+    Filters = maps:from_list(cowboy_req:parse_qs(Req)),
+    {cx_router:list_interactions(Ctx, Filters), Req};
 dispatch(<<"GET">>, Id, Ctx, Req) when Id =/= undefined ->
     {cx_router:get_interaction(Ctx, Id), Req};
 dispatch(<<"DELETE">>, Id, Ctx, Req) when Id =/= undefined ->

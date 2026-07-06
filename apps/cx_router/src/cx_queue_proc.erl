@@ -212,7 +212,7 @@ handle_event({call, From}, {accepted, OfferId}, _S, Data) ->
             %% a multi-capacity agent gets the next waiting item from a
             %% fresh pass
             {keep_state, Data0, [
-                {reply, From, ok},
+                {reply, From, {ok, IId}},
                 {{timeout, {offer, OfferId}}, cancel},
                 {next_event, internal, route}
             ]};
@@ -231,6 +231,51 @@ handle_event({call, From}, {rejected, OfferId}, _S, Data) ->
             ]};
         error ->
             {keep_state_and_data, [{reply, From, {error, expired}}]}
+    end;
+%% force sign-out hands an ENGAGED (active/held) interaction back: it
+%% re-enters the waiting order under its preserved {enqueued_at, seq},
+%% so it never loses its place. The state guard makes a duplicate cast
+%% a no-op (first one flips the row to queued).
+handle_event(cast, {requeue_active, IId}, _S, Data) ->
+    Config = refresh_config(Data),
+    Requeued = cx_store:tx(fun() ->
+        case mnesia:read(cx_interaction, {Data#qd.tenant, IId}) of
+            [Rec = #cx_interaction{state = S}] when S =:= active; S =:= held ->
+                Rec1 = Rec#cx_interaction{
+                    state = queued,
+                    agent_id = undefined,
+                    accepted_at = undefined
+                },
+                ok = mnesia:write(Rec1),
+                {requeue, Rec1, Rec#cx_interaction.agent_id};
+            _ ->
+                skip
+        end
+    end),
+    case Requeued of
+        {requeue, Rec, PrevAgent} ->
+            Item = #witem{
+                interaction_id = IId,
+                media = Rec#cx_interaction.media_type,
+                skill_reqs = Config#cx_queue.skill_reqs,
+                enqueued_at = Rec#cx_interaction.enqueued_at,
+                seq = Rec#cx_interaction.seq
+            },
+            Data1 = insert_item(Item, Data#qd{config = Config}),
+            publish(
+                Data1,
+                Item#witem.media,
+                interaction_requeued,
+                #{
+                    <<"interaction_id">> => IId,
+                    <<"agent_id">> => PrevAgent
+                }
+            ),
+            {keep_state, Data1,
+                widen_actions(Item, cx_time:now_ms()) ++
+                    [{next_event, internal, route}]};
+        skip ->
+            keep_state_and_data
     end;
 %% a stopping agent session hands its pending offers back asynchronously
 handle_event(cast, {reject_cast, OfferId}, _S, Data) ->
@@ -496,7 +541,6 @@ agent_snapshots(TenantId) ->
             pid => Pid,
             ready => Ready,
             mix => Mix,
-            wrapup_until => WrapupUntil,
             skills => Skills,
             profile => Profile,
             idle_since => IdleSince
@@ -506,7 +550,6 @@ agent_snapshots(TenantId) ->
             pid = Pid,
             ready = Ready,
             mix = Mix,
-            wrapup_until = WrapupUntil,
             skills = Skills,
             profile = Profile,
             idle_since = IdleSince

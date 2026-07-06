@@ -75,6 +75,9 @@ table_specs() ->
         {cx_not_ready_reason, [
             {attributes, record_info(fields, cx_not_ready_reason)}, {type, set}, Disc
         ]},
+        {cx_qualification_code, [
+            {attributes, record_info(fields, cx_qualification_code)}, {type, set}, Disc
+        ]},
         {cx_interaction, [
             {attributes, record_info(fields, cx_interaction)},
             {type, set},

@@ -27,7 +27,13 @@ auth_test_() ->
     end}.
 
 setup() ->
-    Dir = "_build/eunit-mnesia-" ++ integer_to_list(erlang:unique_integer([positive])),
+    %% unique_integer alone restarts per VM and can collide with a stale
+    %% dir from an earlier run (whose schema predates record changes) —
+    %% the wall clock makes the dir unique across runs too
+    Dir =
+        "_build/eunit-mnesia-" ++
+            integer_to_list(erlang:system_time(microsecond)) ++
+            "-" ++ integer_to_list(erlang:unique_integer([positive])),
     application:set_env(cx_core, mnesia_dir, Dir),
     ok = cx_db:init(),
     {ok, _} = application:ensure_all_started(jose),

@@ -107,7 +107,6 @@ snapshot() ->
                 pid => undefined,
                 ready => #{<<"open_media">> => ready},
                 mix => #{},
-                wrapup_until => 0,
                 skills => Skills,
                 profile => #cx_routing_profile{
                     key = {<<"t">>, <<"p">>},

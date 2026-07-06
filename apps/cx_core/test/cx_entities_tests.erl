@@ -22,12 +22,19 @@ entities_test_() ->
             fun queue_timeout_defaults_and_infinite_ring/0,
             fun routing_profile_crud/0,
             fun not_ready_reason_crud/0,
+            fun qualification_code_tree/0,
             fun permission_denied/0
         ]
     end}.
 
 setup() ->
-    Dir = "_build/eunit-mnesia-" ++ integer_to_list(erlang:unique_integer([positive])),
+    %% unique_integer alone restarts per VM and can collide with a stale
+    %% dir from an earlier run (whose schema predates record changes) —
+    %% the wall clock makes the dir unique across runs too
+    Dir =
+        "_build/eunit-mnesia-" ++
+            integer_to_list(erlang:system_time(microsecond)) ++
+            "-" ++ integer_to_list(erlang:unique_integer([positive])),
     application:set_env(cx_core, mnesia_dir, Dir),
     ok = cx_db:init(),
     cx_test_support:ensure_pg().
@@ -385,6 +392,63 @@ not_ready_reason_crud() ->
     NoPerms = cx_authz:ctx(T, []),
     {ok, [_]} = cx_not_ready_reason:list(NoPerms),
     ok = cx_not_ready_reason:delete(Ctx, Id).
+
+qualification_code_tree() ->
+    T = cx_id:new(),
+    Ctx = admin(T),
+
+    %% a parent must exist
+    ?assertEqual(
+        {error, {invalid, <<"parent_id">>}},
+        cx_qualification_code:create(Ctx, #{
+            <<"name">> => <<"orphan">>,
+            <<"parent_id">> => <<"ghost">>
+        })
+    ),
+
+    {ok, #{<<"id">> := Root, <<"parent_id">> := null, <<"active">> := true}} =
+        cx_qualification_code:create(Ctx, #{<<"name">> => <<"Topic A">>}),
+    {ok, #{<<"id">> := Child}} =
+        cx_qualification_code:create(Ctx, #{
+            <<"name">> => <<"Topic A.1">>,
+            <<"parent_id">> => Root
+        }),
+    {ok, #{<<"id">> := Grandchild}} =
+        cx_qualification_code:create(Ctx, #{
+            <<"name">> => <<"Topic A.1.a">>,
+            <<"parent_id">> => Child
+        }),
+
+    %% reparenting must not close a loop (root under its own grandchild)
+    ?assertEqual(
+        {error, {invalid, <<"parent_id">>}},
+        cx_qualification_code:update(Ctx, Root, #{<<"parent_id">> => Grandchild})
+    ),
+    %% a node is never its own parent
+    ?assertEqual(
+        {error, {invalid, <<"parent_id">>}},
+        cx_qualification_code:update(Ctx, Child, #{<<"parent_id">> => Child})
+    ),
+
+    %% reads are open to tenant members; the tree lists in full
+    NoPerms = cx_authz:ctx(T, []),
+    {ok, All} = cx_qualification_code:list(NoPerms),
+    ?assertEqual(3, length(All)),
+
+    %% interior nodes with children cannot be deleted...
+    ?assertEqual({error, in_use}, cx_qualification_code:delete(Ctx, Child)),
+    %% ...but retire fine, and reparenting to null makes a node a root
+    {ok, #{<<"active">> := false}} =
+        cx_qualification_code:update(Ctx, Child, #{<<"active">> => false}),
+    {ok, #{<<"parent_id">> := null}} =
+        cx_qualification_code:update(Ctx, Grandchild, #{<<"parent_id">> => null}),
+
+    %% childless now: delete bottom-up
+    ok = cx_qualification_code:delete(Ctx, Grandchild),
+    ok = cx_qualification_code:delete(Ctx, Child),
+    ok = cx_qualification_code:delete(Ctx, Root),
+    ?assertEqual({error, not_found}, cx_qualification_code:delete(Ctx, Root)),
+    ok.
 
 permission_denied() ->
     T = cx_id:new(),

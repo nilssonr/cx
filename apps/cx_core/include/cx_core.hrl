@@ -72,8 +72,15 @@
     %% cx_queue:create/2, so every construction states its values and
     %% eqWAlizer rejects one that forgets
     wrapup_duration_ms :: non_neg_integer(),
+    %% cap on TOTAL after-call work per interaction (initial duration plus
+    %% extensions); infinity = uncapped (0 on the wire)
+    wrapup_max_ms :: pos_integer() | infinity,
     %% ring time for an offer; infinity = ring forever (0 on the wire)
     offer_timeout_ms :: pos_integer() | infinity,
+    %% when true, after-call work cannot finalize (timer, DELETE or
+    %% sign-out) until the interaction carries qualification codes —
+    %% entering them is what releases the agent
+    qualification_required :: boolean(),
     status = open :: open | closed
 }).
 
@@ -98,21 +105,43 @@
     active = true :: boolean()
 }).
 
+%% Hierarchical classification codes applied to interactions during
+%% completion/after-call work. parent_id links form a tenant-scoped tree
+%% (undefined = root); ANY active node is selectable — interior nodes
+%% included (the UI drills down through cascading dropdowns and may stop
+%% at any level).
+-record(cx_qualification_code, {
+    key :: {binary(), binary()},
+    name :: binary(),
+    parent_id :: binary() | undefined,
+    active = true :: boolean()
+}).
+
 %% enqueued_at + seq form the queue position and are assigned exactly once;
 %% requeues (reject/timeout/crash) and queue-process recovery reuse them, so
 %% an interaction can never lose its place.
+%%
+%% Lifecycle: queued -> offered -> active <-> held -> wrapup -> completed
+%% (wrapup is skipped when the queue's wrapup_duration_ms is 0; cancelled
+%% is reachable from queued only). "completed" is terminal INCLUDING
+%% after-call work: the customer part ends at wrapup entry, the agent is
+%% released at completed.
 -record(cx_interaction, {
     key :: {binary(), binary()},
     queue_key :: {binary(), binary()},
     %% one of cx_media:all() — media types are product concepts, not data
     media_type :: binary(),
     properties = #{} :: #{binary() => binary()},
-    state = queued :: queued | offered | active | completed | cancelled,
+    state = queued :: queued | offered | active | held | wrapup | completed | cancelled,
     agent_id :: binary() | undefined,
     created_at :: integer(),
     enqueued_at :: integer(),
     seq :: integer(),
     accepted_at :: integer() | undefined,
+    wrapup_started_at :: integer() | undefined,
+    wrapup_until :: integer() | undefined,
+    %% cx_qualification_code ids (any node of the tree, interior included)
+    qualification_ids = [] :: [binary()],
     completed_at :: integer() | undefined
 }).
 
@@ -153,9 +182,10 @@
     key :: {binary(), binary()},
     pid :: pid(),
     ready = #{} :: #{binary() => ready | {not_ready, binary() | undefined}},
-    %% active + reserved (pending offers) counts per media type
+    %% per-media counts of everything occupying capacity: active + held +
+    %% after-call work + reserved (pending offers) — wrap-up is not a
+    %% separate routing gate, it occupies its slot through this mix
     mix = #{} :: #{binary() => non_neg_integer()},
-    wrapup_until = 0 :: integer(),
     skills = #{} :: #{binary() => pos_integer()},
     profile :: #cx_routing_profile{} | undefined,
     idle_since = 0 :: integer()

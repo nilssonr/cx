@@ -78,7 +78,6 @@ snapshot(Id, Overrides) ->
             pid => self(),
             ready => #{?CHAT => ready},
             mix => #{},
-            wrapup_until => 0,
             skills => #{},
             profile => profile(),
             idle_since => 0
@@ -94,12 +93,8 @@ routable_test() ->
     %% explicitly not ready
     NotReady = snapshot(<<"a">>, #{ready => #{?CHAT => {not_ready, <<"lunch">>}}}),
     ?assertNot(cx_routing:routable(NotReady, ?CHAT, Now)),
-    %% in wrap-up
-    InWrapup = snapshot(<<"a">>, #{wrapup_until => Now + 1}),
-    ?assertNot(cx_routing:routable(InWrapup, ?CHAT, Now)),
-    WrapupOver = snapshot(<<"a">>, #{wrapup_until => Now}),
-    ?assert(cx_routing:routable(WrapupOver, ?CHAT, Now)),
-    %% profile denies
+    %% profile denies — this is also how after-call work gates routing:
+    %% a wrapup-phase interaction occupies its slot in the mix
     Full = snapshot(<<"a">>, #{
         profile => profile(1, #{}, []),
         mix => #{?CHAT => 1}

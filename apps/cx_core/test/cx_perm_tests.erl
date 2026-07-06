@@ -29,8 +29,10 @@ tenant_assignable_test() ->
 %% here AND to cx_perm — otherwise no tenant role can ever grant it.
 catalog_covers_all_checked_permissions_test() ->
     InUse = [
+        <<"agent:interactions:self">>,
         <<"agent:offers:self">>,
         <<"agent:ready:self">>,
+        <<"agent:session:any">>,
         <<"agent:session:self">>,
         <<"agent:wrapup:self">>,
         <<"interactions:cancel">>,
@@ -38,6 +40,7 @@ catalog_covers_all_checked_permissions_test() ->
         <<"interactions:read">>,
         <<"not_ready_reasons:write">>,
         <<"presence:set:self">>,
+        <<"qualification_codes:write">>,
         <<"queues:read">>,
         <<"queues:write">>,
         <<"roles:write">>,

@@ -13,6 +13,8 @@
     admin_crud_roundtrip/1,
     cross_tenant_forbidden/1,
     agent_open_media_flow/1,
+    qualification_wrapup_flow/1,
+    read_surface_and_pagination/1,
     integrator_cancel_rules/1,
     forbidden_without_permission/1,
     presence_roundtrip/1
@@ -25,6 +27,8 @@ all() ->
         admin_crud_roundtrip,
         cross_tenant_forbidden,
         agent_open_media_flow,
+        qualification_wrapup_flow,
+        read_surface_and_pagination,
         integrator_cancel_rules,
         forbidden_without_permission,
         presence_roundtrip
@@ -95,7 +99,6 @@ admin_crud_roundtrip(Config) ->
             }
         ),
     %% queue, profile, reason (media types are product constants)
-    MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(
             Config,
@@ -282,6 +285,7 @@ agent_open_media_flow(Config) ->
             <<"agent:session:self">>,
             <<"agent:ready:self">>,
             <<"agent:offers:self">>,
+            <<"agent:interactions:self">>,
             <<"agent:wrapup:self">>
         ]
     ),
@@ -296,8 +300,11 @@ agent_open_media_flow(Config) ->
         ]
     ),
 
-    %% agent signs in and goes ready for open media
+    %% agent signs in and goes ready for open media; a retried sign-in
+    %% is idempotent (200 + current state, not 409)
     {200, #{<<"agent_id">> := _}} =
+        req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {200, #{<<"agent_id">> := _, <<"ready">> := _}} =
         req(Config, post, "/api/v1/agent/session", Agent, #{}),
     {204, _} = req(
         Config,
@@ -321,10 +328,10 @@ agent_open_media_flow(Config) ->
             }
         ),
 
-    %% the offer shows up on the agent session (event push is a later
-    %% milestone; REST clients poll the session)
+    %% the offer shows up on the agent session (the WS transport pushes
+    %% it too; polling the session stays a supported REST pattern)
     {ok, OfferId} = poll_offer(Config, Agent),
-    {204, _} = req(
+    {200, #{<<"interaction_id">> := IId}} = req(
         Config,
         post,
         "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
@@ -358,6 +365,217 @@ agent_open_media_flow(Config) ->
             Integrator
         ),
     {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
+    %% sign-out is idempotent
+    {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
+    ok.
+
+%% Qualification codes over HTTP: tenant CRUD of the tree, then the
+%% agent-side hard block — DELETE wrapup 409s until codes are PUT.
+qualification_wrapup_flow(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := Tid}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Qual">>}),
+    Admin = boss_token(Config, Tid),
+    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+
+    %% tree CRUD via the generic handler
+    {200, #{<<"id">> := TopicA, <<"parent_id">> := null}} =
+        req(Config, post, Base ++ "/qualification-codes", Admin, #{
+            <<"name">> => <<"Topic A">>
+        }),
+    {200, #{<<"id">> := TopicA1}} =
+        req(Config, post, Base ++ "/qualification-codes", Admin, #{
+            <<"name">> => <<"Topic A.1">>,
+            <<"parent_id">> => TopicA
+        }),
+    {200, Codes} = req(Config, get, Base ++ "/qualification-codes", Admin),
+    ?assertEqual(2, length(Codes)),
+    {409, #{<<"error">> := <<"in_use">>}} =
+        req(Config, delete, Base ++ "/qualification-codes/" ++ binary_to_list(TopicA), Admin),
+
+    {200, #{<<"id">> := QueueId}} =
+        req(Config, post, Base ++ "/queues", Admin, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 60000,
+            <<"qualification_required">> => true
+        }),
+    Agent = user_token(Config, Tid, <<"qual-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>,
+        <<"agent:offers:self">>,
+        <<"agent:interactions:self">>,
+        <<"agent:wrapup:self">>
+    ]),
+    Integrator = user_token(Config, Tid, <<"qual-integrator">>, [
+        <<"interactions:create">>,
+        <<"interactions:read">>
+    ]),
+
+    {200, #{<<"agent_id">> := AgentUid}} =
+        req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {204, _} = req(
+        Config,
+        put,
+        "/api/v1/agent/media/open_media/state",
+        Agent,
+        #{<<"state">> => <<"ready">>}
+    ),
+    {200, #{<<"id">> := IId}} =
+        req(Config, post, "/api/v1/interactions", Integrator, #{
+            <<"queue_id">> => QueueId,
+            <<"media_type">> => <<"open_media">>
+        }),
+    {ok, OfferId} = poll_offer(Config, Agent),
+    {200, #{<<"interaction_id">> := IId}} = req(
+        Config,
+        post,
+        "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
+        Agent,
+        #{}
+    ),
+    IPath = "/api/v1/agent/interactions/" ++ binary_to_list(IId),
+
+    %% hold/resume ride along over HTTP
+    {204, _} = req(Config, post, IPath ++ "/hold", Agent, #{}),
+    {409, #{<<"error">> := <<"not_active">>}} =
+        req(Config, post, IPath ++ "/hold", Agent, #{}),
+    {204, _} = req(Config, post, IPath ++ "/resume", Agent, #{}),
+
+    {200, #{<<"state">> := <<"wrapup">>, <<"wrapup_until">> := _}} =
+        req(Config, post, IPath ++ "/complete", Agent, #{}),
+
+    %% finalize is blocked until codes are entered
+    {409, #{<<"error">> := <<"qualification_required">>}} =
+        req(Config, delete, IPath ++ "/wrapup", Agent),
+    {422, _} =
+        req(Config, put, IPath ++ "/qualifications", Agent, #{
+            <<"qualification_ids">> => [<<"ghost">>]
+        }),
+    {204, _} =
+        req(Config, put, IPath ++ "/qualifications", Agent, #{
+            <<"qualification_ids">> => [TopicA1]
+        }),
+    {204, _} = req(Config, delete, IPath ++ "/wrapup", Agent),
+
+    {200, #{
+        <<"state">> := <<"completed">>,
+        <<"qualification_ids">> := [TopicA1]
+    }} =
+        req(
+            Config,
+            get,
+            "/api/v1/interactions/" ++ binary_to_list(IId),
+            Integrator
+        ),
+    {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
+
+    %% supervisor force sign-out route: idempotent even when the target
+    %% is already gone; a plain agent token lacks agent:session:any
+    KickPath =
+        Base ++ "/users/" ++ binary_to_list(AgentUid) ++ "/agent-session",
+    {403, _} = req(Config, delete, KickPath, Agent),
+    {204, _} = req(Config, delete, KickPath, Admin),
+    ok.
+
+%% The read surface: tenant-wide filtered list with cursor pagination,
+%% the agent's own detailed list, and the structured ready map.
+read_surface_and_pagination(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := Tid}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Reads">>}),
+    Admin = boss_token(Config, Tid),
+    Base = binary_to_list(<<"/api/v1/tenants/", Tid/binary>>),
+    {200, #{<<"id">> := QueueId}} =
+        req(Config, post, Base ++ "/queues", Admin, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 0
+        }),
+    {200, #{<<"id">> := ReasonId}} =
+        req(Config, post, Base ++ "/not-ready-reasons", Admin, #{
+            <<"name">> => <<"Lunch">>
+        }),
+    Integrator = user_token(Config, Tid, <<"reads-integrator">>, [
+        <<"interactions:create">>,
+        <<"interactions:read">>
+    ]),
+    Agent = user_token(Config, Tid, <<"reads-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>,
+        <<"agent:offers:self">>,
+        <<"agent:interactions:self">>
+    ]),
+
+    Ids = [
+        begin
+            {200, #{<<"id">> := I}} =
+                req(Config, post, "/api/v1/interactions", Integrator, #{
+                    <<"queue_id">> => QueueId,
+                    <<"media_type">> => <<"open_media">>
+                }),
+            I
+        end
+     || _ <- [1, 2, 3]
+    ],
+
+    %% filters + validation
+    {200, #{<<"items">> := All, <<"next">> := null}} =
+        req(Config, get, "/api/v1/interactions?state=queued", Integrator),
+    ?assertEqual(lists:sort(Ids), lists:sort([maps:get(<<"id">>, I) || I <- All])),
+    {200, #{<<"items">> := []}} =
+        req(Config, get, "/api/v1/interactions?state=completed", Integrator),
+    {422, _} = req(Config, get, "/api/v1/interactions?state=bogus", Integrator),
+    {422, _} = req(Config, get, "/api/v1/interactions?limit=0", Integrator),
+
+    %% cursor walk: 2 + 1, newest first, no overlap
+    {200, #{<<"items">> := [P1a, P1b], <<"next">> := Cursor}} =
+        req(Config, get, "/api/v1/interactions?limit=2", Integrator),
+    ?assert(is_binary(Cursor)),
+    {200, #{<<"items">> := [P2a]}} =
+        req(
+            Config,
+            get,
+            "/api/v1/interactions?limit=2&after=" ++ binary_to_list(Cursor),
+            Integrator
+        ),
+    PageIds = [maps:get(<<"id">>, I) || I <- [P1a, P1b, P2a]],
+    ?assertEqual(lists:sort(Ids), lists:sort(PageIds)),
+
+    %% the agent's own list rehydrates detail; ready map is structured
+    {200, _} = req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {204, _} = req(Config, put, "/api/v1/agent/media/open_media/state", Agent, #{
+        <<"state">> => <<"not_ready">>,
+        <<"reason_id">> => ReasonId
+    }),
+    {200, #{
+        <<"ready">> := #{
+            <<"open_media">> := #{
+                <<"state">> := <<"not_ready">>,
+                <<"reason_id">> := ReasonId
+            }
+        }
+    }} =
+        req(Config, get, "/api/v1/agent/session", Agent),
+    {200, []} = req(Config, get, "/api/v1/agent/interactions", Agent),
+    %% a reason on "ready" is a client bug, not something to drop silently
+    {422, #{<<"error">> := <<"invalid:reason_id">>}} =
+        req(Config, put, "/api/v1/agent/media/open_media/state", Agent, #{
+            <<"state">> => <<"ready">>,
+            <<"reason_id">> => ReasonId
+        }),
+    {204, _} = req(Config, put, "/api/v1/agent/media/open_media/state", Agent, #{
+        <<"state">> => <<"ready">>
+    }),
+    {ok, OfferId} = poll_offer(Config, Agent),
+    {200, #{<<"interaction_id">> := Mine}} =
+        req(
+            Config,
+            post,
+            "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
+            Agent,
+            #{}
+        ),
+    {200, [#{<<"id">> := Mine, <<"state">> := <<"active">>, <<"queue_id">> := QueueId}]} =
+        req(Config, get, "/api/v1/agent/interactions", Agent),
     ok.
 
 integrator_cancel_rules(Config) ->
@@ -498,7 +716,7 @@ poll_offer(_Config, _Agent, 0) ->
     {error, no_offer};
 poll_offer(Config, Agent, N) ->
     case req(Config, get, "/api/v1/agent/session", Agent) of
-        {200, #{<<"pending_offers">> := [OfferId | _]}} ->
+        {200, #{<<"pending_offers">> := [#{<<"offer_id">> := OfferId} | _]}} ->
             {ok, OfferId};
         {200, _} ->
             timer:sleep(20),

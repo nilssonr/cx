@@ -1,4 +1,4 @@
--module(cx_h_offer).
+-module(cx_h_agent_offer).
 
 %% POST /api/v1/agent/offers/:offer_id/accept | /reject
 
