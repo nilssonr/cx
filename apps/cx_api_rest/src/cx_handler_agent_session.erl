@@ -9,7 +9,9 @@
 %% GET    /api/v1/agent/session              current state
 %% DELETE /api/v1/agent/session[?force=true] sign out (idempotent);
 %%                                           force requeues engaged work
-%%                                           and finalizes ACW
+%%                                           and finalizes ACW, but still
+%%                                           refuses while mandatory
+%%                                           codes are missing (409)
 
 -export([init/2]).
 

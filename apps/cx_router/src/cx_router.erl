@@ -47,24 +47,26 @@ stop_session(Ctx) ->
     stop_session(Ctx, false).
 
 %% Idempotent sign-out: no session to delete is already the desired
-%% state. Force requeues engaged work and finalizes ACW (the escape
-%% hatch past has_active_interactions and qualification_required).
+%% state. Force requeues engaged work (the escape hatch past
+%% has_active_interactions) but still refuses to skip mandatory
+%% qualification codes — only the supervisor authority below may.
 stop_session(Ctx = #auth_context{}, Force) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:self">>),
         case {session_of(Ctx), Force} of
-            {{ok, Pid}, true} -> call(Pid, force_stop_session);
+            {{ok, Pid}, true} -> call(Pid, {force_stop_session, honor_qualification});
             {{ok, Pid}, false} -> call(Pid, stop_session);
             {{error, no_session}, _} -> ok
         end
     end.
 
-%% Supervisor kick-out — a separate, deliberately grantable authority.
+%% Supervisor kick-out — a separate, deliberately grantable authority,
+%% and the only one that overrides the mandatory-codes gate.
 force_stop_session(Ctx = #auth_context{tenant_id = TenantId}, UserId) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:session:any">>),
         case cx_registry:whereis_name({agent, TenantId, UserId}) of
-            Pid when is_pid(Pid) -> call(Pid, force_stop_session);
+            Pid when is_pid(Pid) -> call(Pid, {force_stop_session, override});
             undefined -> ok
         end
     end.

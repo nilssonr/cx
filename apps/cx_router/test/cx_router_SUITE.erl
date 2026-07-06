@@ -27,6 +27,7 @@
     stop_session_rules/1,
     accept_retry_idempotent/1,
     force_sign_out_requeues/1,
+    supervisor_force_overrides_qualification/1,
     dangling_profile_fails_closed/1,
     facade_permissions/1,
     reject_releases_monitor/1,
@@ -57,6 +58,7 @@ all() ->
         stop_session_rules,
         accept_retry_idempotent,
         force_sign_out_requeues,
+        supervisor_force_overrides_qualification,
         dangling_profile_fails_closed,
         facade_permissions,
         reject_releases_monitor,
@@ -986,6 +988,8 @@ force_sign_out_requeues(_Config) ->
     Admin = admin(T),
     ok = cx_event:subscribe(T),
     Media = <<"open_media">>,
+    {ok, #{<<"id">> := Code}} =
+        cx_qualification_code:create(Admin, #{<<"name">> => <<"Topic">>}),
     QueueId = queue(Admin, #{
         <<"name">> => <<"q">>,
         <<"wrapup_duration_ms">> => 60000,
@@ -1024,7 +1028,11 @@ force_sign_out_requeues(_Config) ->
     %% normal sign-out refuses: engaged work wins the error precedence
     %% (the unqualified-ACW refusal is covered in qualification_gate)
     ?assertEqual({error, has_active_interactions}, cx_router:stop_session(AgentA)),
+    %% self-force is no loophole around mandatory codes either
+    ?assertEqual({error, qualification_required}, cx_router:stop_session(AgentA, true)),
 
+    ok = cx_router:qualify(AgentA, I2, #{<<"qualification_ids">> => [Code]}),
+    {ok, _} = wait_data(interaction_qualified),
     ok = cx_router:stop_session(AgentA, true),
     {ok, _} = wait_event(session_ended),
     {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_requeued, 2000),
@@ -1053,6 +1061,42 @@ force_sign_out_requeues(_Config) ->
     ok = cx_router:force_stop_session(Supervisor, UserB),
     {ok, _} = wait_event(session_ended),
     ?assertEqual({error, no_session}, cx_router:get_session(AgentB)),
+    ok.
+
+%% Only the supervisor authority may force past mandatory codes: the
+%% kick finalizes the unqualified ACW that self-force refuses to.
+supervisor_force_overrides_qualification(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 60000,
+        <<"qualification_required">> => true
+    }),
+    UserA = user(Admin, #{}, undefined),
+    AgentA = start_agent(T, UserA),
+    ok = cx_router:set_ready(AgentA, Media, ready),
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            integrator(T),
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := O1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(AgentA, O1),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(AgentA, I1),
+    {ok, _} = wait_event(wrapup_started),
+
+    ?assertEqual(
+        {error, qualification_required},
+        cx_router:stop_session(AgentA, true)
+    ),
+
+    Supervisor = cx_authz:ctx(T, [<<"agent:session:any">>]),
+    ok = cx_router:force_stop_session(Supervisor, UserA),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
+    {ok, _} = wait_event(session_ended),
     ok.
 
 %% A configured-but-missing routing profile must refuse the session —

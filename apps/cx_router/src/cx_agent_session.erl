@@ -471,42 +471,25 @@ handle_event({call, From}, stop_session, _State, Data) ->
             }),
             {stop_and_reply, normal, [{reply, From, ok}]}
     end;
-handle_event({call, From}, force_stop_session, _State, Data) ->
-    %% The escape hatch (self ?force=true or supervisor kick): engaged
-    %% work goes back to its queue at original position, ACW finalizes
-    %% regardless of qualification, pending offers are handed back.
-    Data1 = maps:fold(
-        fun(InteractionId, W = #work{phase = Phase}, Acc) ->
-            case Phase of
-                wrapup ->
-                    case finalize(Acc, InteractionId, W, wrapup_cancelled) of
-                        {ok, Acc1} -> Acc1;
-                        {error, conflict} -> remove_work(InteractionId, Acc)
-                    end;
-                _ ->
-                    {_, QueueId} = W#work.queue_key,
-                    case cx_queue_process:ensure_started(Acc#agent_session.tenant, QueueId) of
-                        {ok, QueuePid} ->
-                            gen_statem:cast(QueuePid, {requeue_active, InteractionId});
-                        {error, _} ->
-                            ok
-                    end,
-                    remove_work(InteractionId, Acc)
-            end
-        end,
-        Data,
-        Data#agent_session.work
-    ),
-    maps:foreach(
-        fun(OfferId, #pending_offer{queue_pid = QueuePid}) ->
-            gen_statem:cast(QueuePid, {reject_cast, OfferId})
-        end,
-        Data1#agent_session.pending
-    ),
-    publish(Data1, undefined, undefined, session_ended, #{
-        <<"agent_id">> => Data1#agent_session.agent_id
-    }),
-    {stop_and_reply, normal, [{reply, From, ok}]};
+handle_event({call, From}, {force_stop_session, Mode}, _State, Data) ->
+    %% The escape hatch: engaged work goes back to its queue at
+    %% original position, wrap-ups finalize, pending offers are handed
+    %% back. Whether mandatory qualification codes may be skipped is
+    %% the caller's authority, carried as the mode — self ?force=true
+    %% honors the gate, the supervisor kick overrides it. The facade
+    %% maps permissions to modes; this process never sees one.
+    Unqualified = [
+        InteractionId
+     || InteractionId := #work{phase = wrapup, qualification_required = true, qualified = false} <-
+            Data#agent_session.work
+    ],
+    case {Mode, Unqualified} of
+        {honor_qualification, [_ | _]} ->
+            %% force must not be a loophole around mandatory codes
+            {keep_state_and_data, [{reply, From, {error, qualification_required}}]};
+        _ ->
+            force_shutdown(From, Data)
+    end;
 handle_event(info, {'DOWN', MonitorRef, process, _Pid, _Reason}, _State, Data) ->
     %% a queue died while we held offers from it — drop those reservations
     Pending = maps:filter(
@@ -571,6 +554,43 @@ write_snapshot(Data = #agent_session{tenant = Tenant, agent_id = AgentId}) ->
         idle_since = Data#agent_session.idle_since
     },
     ok = mnesia:dirty_write(Rec).
+
+%% Forced teardown (mode already checked by the caller): engaged work
+%% goes back to its queue at original position, wrap-ups finalize,
+%% pending offers are handed back, the session stops.
+force_shutdown(From, Data) ->
+    Data1 = maps:fold(
+        fun(InteractionId, W = #work{phase = Phase}, Acc) ->
+            case Phase of
+                wrapup ->
+                    case finalize(Acc, InteractionId, W, wrapup_cancelled) of
+                        {ok, Acc1} -> Acc1;
+                        {error, conflict} -> remove_work(InteractionId, Acc)
+                    end;
+                _ ->
+                    {_, QueueId} = W#work.queue_key,
+                    case cx_queue_process:ensure_started(Acc#agent_session.tenant, QueueId) of
+                        {ok, QueuePid} ->
+                            gen_statem:cast(QueuePid, {requeue_active, InteractionId});
+                        {error, _} ->
+                            ok
+                    end,
+                    remove_work(InteractionId, Acc)
+            end
+        end,
+        Data,
+        Data#agent_session.work
+    ),
+    maps:foreach(
+        fun(OfferId, #pending_offer{queue_pid = QueuePid}) ->
+            gen_statem:cast(QueuePid, {reject_cast, OfferId})
+        end,
+        Data1#agent_session.pending
+    ),
+    publish(Data1, undefined, undefined, session_ended, #{
+        <<"agent_id">> => Data1#agent_session.agent_id
+    }),
+    {stop_and_reply, normal, [{reply, From, ok}]}.
 
 %% Finalize an interaction: it leaves the mix and the agent's slot opens.
 %% AcwEvent narrates how the ACW envelope ended (wrapup_ended on timer

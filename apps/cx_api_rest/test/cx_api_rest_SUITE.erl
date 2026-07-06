@@ -14,6 +14,7 @@
     cross_tenant_forbidden/1,
     agent_open_media_flow/1,
     qualification_wrapup_flow/1,
+    self_force_sign_out_qualification_409/1,
     read_surface_and_pagination/1,
     integrator_cancel_rules/1,
     forbidden_without_permission/1,
@@ -28,6 +29,7 @@ all() ->
         cross_tenant_forbidden,
         agent_open_media_flow,
         qualification_wrapup_flow,
+        self_force_sign_out_qualification_409,
         read_surface_and_pagination,
         integrator_cancel_rules,
         forbidden_without_permission,
@@ -474,6 +476,73 @@ qualification_wrapup_flow(Config) ->
     KickPath =
         Base ++ "/users/" ++ binary_to_list(AgentUid) ++ "/agent-session",
     {403, _} = req(Config, delete, KickPath, Agent),
+    {204, _} = req(Config, delete, KickPath, Admin),
+    ok.
+
+%% ?force=true is no loophole around mandatory codes: self-force is
+%% refused while unqualified required wrap-up work exists; only the
+%% supervisor authority (agent:session:any) overrides the gate.
+self_force_sign_out_qualification_409(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := TenantId}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Force">>}),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    {200, #{<<"id">> := QueueId}} =
+        req(Config, post, Base ++ "/queues", Admin, #{
+            <<"name">> => <<"q">>,
+            <<"wrapup_duration_ms">> => 60000,
+            <<"qualification_required">> => true
+        }),
+    Agent = user_token(Config, TenantId, <<"force-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>,
+        <<"agent:offers:self">>,
+        <<"agent:interactions:self">>
+    ]),
+    Integrator = user_token(Config, TenantId, <<"force-integrator">>, [
+        <<"interactions:create">>
+    ]),
+    {200, #{<<"agent_id">> := AgentUid}} =
+        req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    {204, _} = req(
+        Config,
+        put,
+        "/api/v1/agent/media/open_media/state",
+        Agent,
+        #{<<"state">> => <<"ready">>}
+    ),
+    {200, #{<<"id">> := IId}} =
+        req(Config, post, "/api/v1/interactions", Integrator, #{
+            <<"queue_id">> => QueueId,
+            <<"media_type">> => <<"open_media">>
+        }),
+    {ok, OfferId} = poll_offer(Config, Agent),
+    {200, _} = req(
+        Config,
+        post,
+        "/api/v1/agent/offers/" ++ binary_to_list(OfferId) ++ "/accept",
+        Agent,
+        #{}
+    ),
+    {200, #{<<"state">> := <<"wrapup">>}} =
+        req(
+            Config,
+            post,
+            "/api/v1/agent/interactions/" ++ binary_to_list(IId) ++ "/complete",
+            Agent,
+            #{}
+        ),
+
+    %% unqualified ACW blocks both plain and forced self sign-out
+    {409, #{<<"error">> := <<"qualification_required">>}} =
+        req(Config, delete, "/api/v1/agent/session", Agent),
+    {409, #{<<"error">> := <<"qualification_required">>}} =
+        req(Config, delete, "/api/v1/agent/session?force=true", Agent),
+
+    %% the supervisor authority overrides the gate on a live session
+    KickPath =
+        Base ++ "/users/" ++ binary_to_list(AgentUid) ++ "/agent-session",
     {204, _} = req(Config, delete, KickPath, Admin),
     ok.
 
