@@ -23,7 +23,12 @@ init(Req0, Opts = #{ctx := Ctx}) ->
         end,
     {ok, cx_handler:reply(Result, Req1), Opts}.
 
-%% A reason on "ready" is a client bug — reject rather than drop it.
+%% null == absent everywhere: the server itself serializes ready as
+%% {"state":"ready","reason_id":null}, so PUTting a GET body back must
+%% round-trip. A NON-null reason on "ready" stays a client bug —
+%% rejected rather than dropped.
+parse_state(#{<<"state">> := <<"ready">>, <<"reason_id">> := null}) ->
+    {ok, ready};
 parse_state(#{<<"state">> := <<"ready">>, <<"reason_id">> := _}) ->
     {error, {invalid, <<"reason_id">>}};
 parse_state(#{<<"state">> := <<"ready">>}) ->
@@ -31,6 +36,7 @@ parse_state(#{<<"state">> := <<"ready">>}) ->
 parse_state(#{<<"state">> := <<"not_ready">>} = Params) ->
     case maps:get(<<"reason_id">>, Params, undefined) of
         undefined -> {ok, {not_ready, undefined}};
+        null -> {ok, {not_ready, undefined}};
         ReasonId when is_binary(ReasonId) -> {ok, {not_ready, ReasonId}};
         _ -> {error, {invalid, <<"reason_id">>}}
     end;

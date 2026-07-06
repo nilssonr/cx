@@ -15,6 +15,7 @@
     agent_open_media_flow/1,
     qualification_wrapup_flow/1,
     self_force_sign_out_qualification_409/1,
+    ready_reason_null_roundtrip/1,
     read_surface_and_pagination/1,
     integrator_cancel_rules/1,
     forbidden_without_permission/1,
@@ -30,6 +31,7 @@ all() ->
         agent_open_media_flow,
         qualification_wrapup_flow,
         self_force_sign_out_qualification_409,
+        ready_reason_null_roundtrip,
         read_surface_and_pagination,
         integrator_cancel_rules,
         forbidden_without_permission,
@@ -544,6 +546,61 @@ self_force_sign_out_qualification_409(Config) ->
     KickPath =
         Base ++ "/users/" ++ binary_to_list(AgentUid) ++ "/agent-session",
     {204, _} = req(Config, delete, KickPath, Admin),
+    ok.
+
+%% The server serializes ready as {"state":"ready","reason_id":null};
+%% echoing a GET body back into PUT must round-trip for both states.
+%% A NON-null reason on ready stays rejected (covered in
+%% read_surface_and_pagination).
+ready_reason_null_roundtrip(Config) ->
+    Boss = boss_token(Config, <<"bootstrap">>),
+    {200, #{<<"id">> := TenantId}} =
+        req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Null">>}),
+    Admin = boss_token(Config, TenantId),
+    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    {200, #{<<"id">> := ReasonId}} =
+        req(Config, post, Base ++ "/not-ready-reasons", Admin, #{
+            <<"name">> => <<"Lunch">>
+        }),
+    Agent = user_token(Config, TenantId, <<"null-agent">>, [
+        <<"agent:session:self">>,
+        <<"agent:ready:self">>
+    ]),
+    {200, _} = req(Config, post, "/api/v1/agent/session", Agent, #{}),
+    StatePath = "/api/v1/agent/media/open_media/state",
+
+    %% explicit nulls are accepted as absent for both states
+    {204, _} = req(Config, put, StatePath, Agent, #{
+        <<"state">> => <<"ready">>,
+        <<"reason_id">> => null
+    }),
+    {204, _} = req(Config, put, StatePath, Agent, #{
+        <<"state">> => <<"not_ready">>,
+        <<"reason_id">> => null
+    }),
+
+    %% the GET body echoes back verbatim, for both states
+    {204, _} = req(Config, put, StatePath, Agent, #{
+        <<"state">> => <<"not_ready">>,
+        <<"reason_id">> => ReasonId
+    }),
+    {200, #{<<"ready">> := #{<<"open_media">> := NotReadyBody}}} =
+        req(Config, get, "/api/v1/agent/session", Agent),
+    ?assertEqual(
+        #{<<"state">> => <<"not_ready">>, <<"reason_id">> => ReasonId},
+        NotReadyBody
+    ),
+    {204, _} = req(Config, put, StatePath, Agent, NotReadyBody),
+    {204, _} = req(Config, put, StatePath, Agent, #{<<"state">> => <<"ready">>}),
+    {200, #{<<"ready">> := #{<<"open_media">> := ReadyBody}}} =
+        req(Config, get, "/api/v1/agent/session", Agent),
+    ?assertEqual(
+        #{<<"state">> => <<"ready">>, <<"reason_id">> => null},
+        ReadyBody
+    ),
+    {204, _} = req(Config, put, StatePath, Agent, ReadyBody),
+
+    {204, _} = req(Config, delete, "/api/v1/agent/session", Agent),
     ok.
 
 %% The read surface: tenant-wide filtered list with cursor pagination,
