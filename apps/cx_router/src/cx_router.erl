@@ -177,7 +177,9 @@ agent_interaction(Ctx = #auth_context{tenant_id = TenantId}, InteractionId) ->
     end.
 
 %% The agent's own interactions in full detail — the rehydration surface
-%% a reconnecting client uses instead of replaying missed events.
+%% a reconnecting client uses instead of replaying missed events. Dirty
+%% reads: the client resumes the event stream right after this snapshot,
+%% so a sync transaction per owned row bought consistency nobody sees.
 agent_interactions(Ctx = #auth_context{tenant_id = TenantId}) ->
     maybe
         ok ?= cx_authz:require(Ctx, <<"agent:interactions:self">>),
@@ -187,7 +189,7 @@ agent_interactions(Ctx = #auth_context{tenant_id = TenantId}) ->
             Rec
          || InteractionId <- IIds,
             Rec <- [
-                case cx_store:read(cx_interaction, {TenantId, InteractionId}) of
+                case cx_store:dirty_read(cx_interaction, {TenantId, InteractionId}) of
                     {ok, R} -> R;
                     {error, not_found} -> undefined
                 end

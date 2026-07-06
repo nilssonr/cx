@@ -7,7 +7,7 @@
 %% dynamic() returns push the checking to the callers' pattern matches
 %% instead of pretending Mnesia gives us typed records.
 
--export([tx/1, read/2, list/2, dirty_list/2]).
+-export([tx/1, read/2, dirty_read/2, list/2, dirty_list/2]).
 
 -spec tx(fun(() -> eqwalizer:dynamic())) -> eqwalizer:dynamic().
 tx(Fun) ->
@@ -25,6 +25,17 @@ read(Tab, Key) ->
             [] -> {error, not_found}
         end
     end).
+
+%% Dirty single-key variant, same rationale as dirty_list: hot read
+%% paths (e.g. reconnect rehydration) where a millisecond of staleness
+%% is invisible to the caller anyway.
+-spec dirty_read(atom(), term()) ->
+    {ok, eqwalizer:dynamic()} | {error, not_found}.
+dirty_read(Tab, Key) ->
+    case mnesia:dirty_read(Tab, Key) of
+        [Rec] -> {ok, Rec};
+        [] -> {error, not_found}
+    end.
 
 %% Pattern comes from cx_patterns and must constrain the key to
 %% {TenantId, '_'} (or the tenant id itself for cx_tenant) — tenant
