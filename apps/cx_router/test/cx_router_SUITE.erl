@@ -21,6 +21,7 @@
     wrapup_cap_enforced/1,
     hold_occupies_capacity/1,
     qualification_gate/1,
+    wrapup_extend_when_overdue_blocked/1,
     stop_session_rules/1,
     accept_retry_idempotent/1,
     force_sign_out_requeues/1,
@@ -48,6 +49,7 @@ all() ->
         wrapup_cap_enforced,
         hold_occupies_capacity,
         qualification_gate,
+        wrapup_extend_when_overdue_blocked,
         stop_session_rules,
         accept_retry_idempotent,
         force_sign_out_requeues,
@@ -715,6 +717,57 @@ qualification_gate(_Config) ->
     {ok, _} = wait_event(wrapup_ended, 2000),
     {ok, #{<<"interaction_id">> := I2}} = wait_data(interaction_completed),
 
+    ok = cx_router:stop_session(Agent),
+    ok.
+
+%% Extending an overdue, qualification-blocked wrap-up must not crash
+%% the session: the hard block keeps the interaction past its deadline
+%% without re-arming, so an extend smaller than the overdue amount
+%% would arm a negative timer — bad_action_from_state_function on a
+%% restart => temporary child, i.e. an implicit sign-out.
+wrapup_extend_when_overdue_blocked(_Config) ->
+    T = cx_id:new(),
+    Admin = admin(T),
+    ok = cx_event:subscribe(T),
+    Media = <<"open_media">>,
+    {ok, #{<<"id">> := Code}} =
+        cx_qualification_code:create(Admin, #{<<"name">> => <<"Topic">>}),
+    QueueId = queue(Admin, #{
+        <<"name">> => <<"q">>,
+        <<"wrapup_duration_ms">> => 200,
+        <<"qualification_required">> => true
+    }),
+    UserId = user(Admin, #{}, undefined),
+    Agent = start_agent(T, UserId),
+    ok = cx_router:set_ready(Agent, Media, ready),
+
+    {ok, #{<<"id">> := I1}} =
+        cx_router:create_interaction(
+            integrator(T),
+            #{<<"queue_id">> => QueueId, <<"media_type">> => Media}
+        ),
+    {ok, #{<<"offer_id">> := Offer1}} = wait_data(offer_created),
+    {ok, _} = cx_router:accept_offer(Agent, Offer1),
+    {ok, #{<<"state">> := <<"wrapup">>}} = cx_router:complete(Agent, I1),
+    {ok, _} = wait_event(wrapup_started),
+
+    %% the 200 ms timer fires against the block; wrapup_until is now in
+    %% the past and stays there
+    ?assertEqual(timeout, wait_event(wrapup_ended, 500)),
+
+    SessionPid =
+        case cx_registry:whereis_name({agent, T, UserId}) of
+            Pid when is_pid(Pid) -> Pid
+        end,
+    ok = cx_router:extend_wrapup(Agent, I1, 1),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(wrapup_extended),
+    _ = sys:get_state(SessionPid),
+    ?assert(is_process_alive(SessionPid)),
+
+    %% the clamped timer fired straight back into the block; entering
+    %% codes still releases the ACW
+    ok = cx_router:qualify(Agent, I1, #{<<"qualification_ids">> => [Code]}),
+    {ok, #{<<"interaction_id">> := I1}} = wait_data(interaction_completed),
     ok = cx_router:stop_session(Agent),
     ok.
 

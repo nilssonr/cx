@@ -282,7 +282,7 @@ handle_event({call, From}, {complete, InteractionId}, _State, Data) ->
                                         <<"state">> => <<"wrapup">>,
                                         <<"wrapup_until">> => Until
                                     }}},
-                                {{timeout, {wrapup, InteractionId}}, Until - Now, expire}
+                                {{timeout, {wrapup, InteractionId}}, max(0, Until - Now), expire}
                             ]};
                         {error, conflict} ->
                             {keep_state_and_data, [{reply, From, {error, conflict}}]}
@@ -317,9 +317,14 @@ handle_event({call, From}, {extend_wrapup, InteractionId, Ms}, _State, Data) ->
                             publish_i(Data1, W1, InteractionId, wrapup_extended, #{
                                 <<"until">> => Until
                             }),
+                            %% Until can still be in the past: the qualification
+                            %% hard block keeps overdue ACW alive without
+                            %% re-arming, and a small extend may not catch up —
+                            %% a clamped 0 fires straight into the expiry
+                            %% clause, which holds or finalizes correctly.
                             {keep_state, Data1, [
                                 {reply, From, ok},
-                                {{timeout, {wrapup, InteractionId}}, Until - Now, expire}
+                                {{timeout, {wrapup, InteractionId}}, max(0, Until - Now), expire}
                             ]};
                         {error, conflict} ->
                             {keep_state_and_data, [{reply, From, {error, conflict}}]}
