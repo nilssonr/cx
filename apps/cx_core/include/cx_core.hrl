@@ -234,15 +234,18 @@
     updated_at :: integer()
 }).
 
-%% A JWS signing key. Both halves are stored as JWK maps (jose_jwk:to_map).
-%% status: active (sign with the newest active key) | retiring (verify only,
-%% kept published until its longest-lived token expires). At rest this is
-%% filesystem-perms only in v1 (design §8).
+%% A JWS signing key. `alg` is the canonical algorithm atom (cx_jws_alg,
+%% e.g. rs256 | eddsa | hs256) — cx_core stays JWS-agnostic so the field is
+%% typed atom() and refined at the cx_auth boundary. private_jwk is the
+%% signing half; public_jwk is the JWKS-publishable half, `undefined` for a
+%% symmetric key (no public half). status: active (sign with the newest) |
+%% retiring (verify only, kept until its longest-lived token expires). At
+%% rest this is filesystem-perms only in v1 (design §8).
 -record(cx_signing_key, {
     kid :: binary(),
-    alg :: binary(),
+    alg :: atom(),
     private_jwk :: map(),
-    public_jwk :: map(),
+    public_jwk :: map() | undefined,
     status = active :: active | retiring,
     created_at :: integer(),
     not_after :: integer() | undefined

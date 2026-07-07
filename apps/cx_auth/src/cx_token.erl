@@ -13,7 +13,6 @@
 -export([access_token/1, id_token/1]).
 
 -define(DEFAULT_ACCESS_TTL_S, 600).
--define(DEFAULT_ALG, <<"RS256">>).
 
 -spec access_token(map()) -> binary().
 access_token(Args) when is_map(Args) ->
@@ -51,9 +50,8 @@ id_token(Args) when is_map(Args) ->
 %% ---- internals ----
 
 sign(Claims, ExtraHeader) ->
-    {Kid, JWK} = cx_signing_keys:signing_key(),
-    Alg = cx_config:get(cx_auth, signing_alg, ?DEFAULT_ALG),
-    Header = maps:merge(#{<<"alg">> => Alg, <<"kid">> => Kid}, ExtraHeader),
+    {Kid, JWK, JwsName} = cx_signing_keys:signing_key(),
+    Header = maps:merge(#{<<"alg">> => JwsName, <<"kid">> => Kid}, ExtraHeader),
     Signed = jose_jwt:sign(JWK, Header, Claims),
     {_, Token} = jose_jws:compact(Signed),
     Token.

@@ -23,8 +23,13 @@ init_per_suite(Config) ->
     ok = application:set_env(cx_auth, issuer, <<"https://issuer.test">>, [{persistent, true}]),
     ok = application:set_env(cx_auth, audiences, [<<"cx-api">>], [{persistent, true}]),
     ok = application:set_env(cx_auth, key_source, local, [{persistent, true}]),
-    ok = application:set_env(cx_auth, signing_alg, <<"RS256">>, [{persistent, true}]),
-    ok = application:set_env(cx_auth, signing_key_bits, 1024, [{persistent, true}]),
+    ok = application:set_env(cx_auth, signing_alg, rs256, [{persistent, true}]),
+    ok = application:set_env(
+        cx_auth, signing_source, cx_signing_key_generated, [{persistent, true}]
+    ),
+    ok = application:set_env(
+        cx_auth, signing_source_opts, #{rsa_bits => 1024}, [{persistent, true}]
+    ),
     {ok, _} = application:ensure_all_started(cx_api_rest),
     {ok, _} = application:ensure_all_started(inets),
     Port = ranch:get_port(cx_http),

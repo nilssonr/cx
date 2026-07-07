@@ -20,7 +20,7 @@ init(Req0, Opts) ->
 
 metadata() ->
     Issuer = issuer(),
-    Alg = cx_config:get(cx_auth, signing_alg, <<"RS256">>),
+    Alg = signing_alg_name(),
     #{
         <<"issuer">> => Issuer,
         <<"authorization_endpoint">> => join(Issuer, <<"/authorize">>),
@@ -45,6 +45,15 @@ issuer() ->
     case cx_config:get(cx_auth, issuer, <<>>) of
         Issuer when is_binary(Issuer) -> Issuer;
         _ -> <<>>
+    end.
+
+%% The configured signing algorithm as its JWS header name (rs256 ->
+%% <<"RS256">>); RS256 if unset/invalid so discovery always advertises a
+%% conformant value.
+signing_alg_name() ->
+    case cx_jws_alg:from_config(cx_config:get(cx_auth, signing_alg, rs256)) of
+        {ok, Alg} -> cx_jws_alg:jws_name(Alg);
+        {error, unknown_alg} -> <<"RS256">>
     end.
 
 join(Issuer, Path) ->

@@ -18,8 +18,13 @@
         %% consumed from Phase 2 on (see docs/inhouse-auth-design.md). The
         %% bootstrap-admin and first-party client SEEDS live in sys.config
         %% with their consumers (Phases 1 and 3), never as a default here.
-        {signing_alg, <<"RS256">>},
-        {signing_key_bits, 2048},
+        %% Issuer signing: algorithm is a cx_jws_alg atom (rs256 | eddsa |
+        %% hs256 | ...); the source is a cx_signing_key_source module
+        %% (cx_signing_key_generated for prod asymmetric keys,
+        %% cx_signing_key_static for a dev/lab shared symmetric secret).
+        {signing_alg, rs256},
+        {signing_source, cx_signing_key_generated},
+        {signing_source_opts, #{rsa_bits => 2048}},
         {token_access_ttl_s, 600},
         {token_refresh_ttl_s, 2592000},
         {token_refresh_idle_ttl_s, 1209600},
