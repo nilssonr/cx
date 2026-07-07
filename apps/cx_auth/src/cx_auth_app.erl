@@ -19,7 +19,17 @@ start(_StartType, _StartArgs) ->
         _ ->
             ok
     end,
+    ok = seed_bootstrap_admin(),
     cx_auth_sup:start_link().
+
+%% Seed the local admin identity from config on a fresh deployment
+%% (idempotent). Its subject must also be in platform_admin_subjects to
+%% gain platform authority. No-op when unconfigured. See cx_identity.
+seed_bootstrap_admin() ->
+    case application:get_env(cx_auth, bootstrap_admin) of
+        {ok, Admin} when is_map(Admin) -> cx_identity:ensure_seed(Admin);
+        _ -> ok
+    end.
 
 stop(_State) ->
     ok.

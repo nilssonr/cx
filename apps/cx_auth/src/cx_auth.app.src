@@ -20,7 +20,6 @@
         %% with their consumers (Phases 1 and 3), never as a default here.
         {signing_alg, <<"RS256">>},
         {signing_key_bits, 2048},
-        {password_pbkdf2_iterations, 210000},
         {token_access_ttl_s, 600},
         {token_refresh_ttl_s, 2592000},
         {token_refresh_idle_ttl_s, 1209600},
