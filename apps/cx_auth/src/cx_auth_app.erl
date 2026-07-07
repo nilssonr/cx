@@ -20,6 +20,7 @@ start(_StartType, _StartArgs) ->
             ok
     end,
     ok = seed_bootstrap_admin(),
+    ok = seed_oauth_clients(),
     cx_auth_sup:start_link().
 
 %% Seed the local admin identity from config on a fresh deployment
@@ -30,6 +31,17 @@ seed_bootstrap_admin() ->
         {ok, Admin} when is_map(Admin) -> cx_identity:ensure_seed(Admin);
         _ -> ok
     end.
+
+%% Seed the first-party OAuth clients (the SPA and mobile app) from config,
+%% idempotently. No-op when unconfigured.
+seed_oauth_clients() ->
+    lists:foreach(
+        fun
+            (Client) when is_map(Client) -> cx_oauth_client:ensure_seed(Client);
+            (_) -> ok
+        end,
+        application:get_env(cx_auth, first_party_clients, [])
+    ).
 
 stop(_State) ->
     ok.
