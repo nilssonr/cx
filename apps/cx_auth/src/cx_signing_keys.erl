@@ -3,7 +3,7 @@
 %% The issuer's own JWS signing keys. Owns the LIFECYCLE — generate the first
 %% key at boot if none exists, keep the newest active private key for signing
 %% and every published half for verification + JWKS, rotate with a two-key
-%% overlap (design §8) — and delegates the two things that vary:
+%% overlap — and delegates the two things that vary:
 %%   * WHICH algorithm            -> cx_jws_alg (closed atom registry)
 %%   * HOW the key is acquired     -> a cx_signing_key_source behaviour module
 %%                                    (generated | static-symmetric | ...).
@@ -59,8 +59,8 @@ jwks() ->
         error:badarg -> []
     end.
 
-%% Operator-triggered rotation (design §8): mint a new active key, retire the
-%% current one with a grace window covering outstanding access tokens.
+%% Operator-triggered rotation: mint a new active key and retire the current
+%% one with a grace window covering outstanding access tokens.
 -spec rotate() -> ok.
 rotate() ->
     gen_server:call(?MODULE, rotate).

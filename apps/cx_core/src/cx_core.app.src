@@ -10,8 +10,6 @@
     ]},
     {env, [
         {mnesia_dir, "data/mnesia"},
-        %% Local-identity credentials (cx_password / cx_identity live in
-        %% cx_core). Cost + lockout policy; see docs/inhouse-auth-design.md.
         {password_pbkdf2_iterations, 210000},
         {login_max_failures, 5},
         {login_lockout_ms, 900000}

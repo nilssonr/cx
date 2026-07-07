@@ -4,8 +4,8 @@
 %% crypto NIF (crypto:pbkdf2_hmac/5) — native, FIPS-approved, no new
 %% dependency and nothing hand-rolled: we iterate a vetted primitive, we do
 %% not invent one. Hashes are stored as a self-describing PHC string so the
-%% cost — or the whole algorithm, e.g. argon2id later (design D3/§4) — can
-%% change without a data migration: verify/2 re-derives from the parameters
+%% cost — or the whole algorithm, e.g. a move to argon2id — can change
+%% without a data migration: verify/2 re-derives from the parameters
 %% carried in the stored hash. Lives in cx_core (not cx_auth) so the
 %% identity domain can use it without a cx_core -> cx_auth cycle.
 
@@ -35,7 +35,7 @@ verify(Password, Phc) when is_binary(Password), is_binary(Phc) ->
 
 %% Run one derivation and return false, so authenticating a non-existent
 %% identity costs the same time as a wrong password — no email-enumeration
-%% oracle (design §12). Also the sink for a federated identity that has no
+%% oracle. Also the sink for a federated identity that has no
 %% local credential.
 -spec verify_dummy(binary()) -> false.
 verify_dummy(Password) when is_binary(Password) ->

@@ -25,7 +25,7 @@ distinct_salts() ->
 
 cost_travels_with_hash() ->
     %% a hash minted at one cost still verifies after the configured cost
-    %% changes — the parameters live in the PHC string (design §4)
+    %% changes — the parameters live in the PHC string
     Phc = cx_password:hash(<<"pw">>),
     application:set_env(cx_core, password_pbkdf2_iterations, 2000),
     try

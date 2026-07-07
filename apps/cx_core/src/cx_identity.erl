@@ -3,7 +3,7 @@
 %% The global person: an email + credential that lives ABOVE tenants (see
 %% cx_core.hrl). One identity maps to many cx_user rows — one per tenant —
 %% joined by #cx_user.subject; the person authenticates once and picks a
-%% tenant (design §3).
+%% tenant.
 %%
 %% Two surfaces:
 %%   * administration — create/get/list/update/disable — plain domain
@@ -123,7 +123,8 @@ verify_credential(Email, Password) ->
     end.
 
 %% Every tenant this person belongs to = the tenants whose cx_user rows
-%% carry this subject. This is the tenant-picker set (design §9.1).
+%% carry this subject. This is the set the login flow offers as the tenant
+%% picker.
 -spec tenants_for(binary()) -> [binary()].
 tenants_for(Subject) ->
     Rows = cx_store:dirty_index_read(cx_user, Subject, #cx_user.subject),
@@ -131,7 +132,7 @@ tenants_for(Subject) ->
 
 %% ---- boot seed (idempotent, no authz) ----
 
-%% Seed a local admin identity at boot if absent (design §10). No context:
+%% Seed a local admin identity at boot if absent. No context:
 %% a fresh deployment has no admin to authorize the write. The subject must
 %% also be listed in cx_auth platform_admin_subjects to gain platform
 %% authority — the identity holds the credential, the config grants the
@@ -186,7 +187,7 @@ new_hash(_Params, Old) ->
     Old.
 
 check_password(#cx_identity{password_hash = undefined}, Password) ->
-    %% federated identity (v2): no local credential, never local-auth
+    %% federated identity: no local credential, never local-auth
     _ = cx_password:verify_dummy(Password),
     {error, invalid_credentials};
 check_password(Identity = #cx_identity{subject = Subject, password_hash = Hash}, Password) ->

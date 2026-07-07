@@ -3,8 +3,8 @@
 %% GET /.well-known/openid-configuration — OpenID Provider metadata (OIDC
 %% Discovery 1.0 / RFC 8414). Advertises the issuer, endpoints, JWKS URI and
 %% supported capabilities so standard client libraries auto-configure.
-%% Auth-exempt (see cx_rest_auth_middleware). RS256 MUST appear in
-%% id_token_signing_alg_values_supported (design §13.6).
+%% Auth-exempt (see cx_rest_auth_middleware). OIDC Discovery requires RS256
+%% in id_token_signing_alg_values_supported.
 
 -export([init/2]).
 

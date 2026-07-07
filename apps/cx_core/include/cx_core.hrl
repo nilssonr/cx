@@ -198,12 +198,12 @@
 %% OAuth client, a signing key, a token, a login session — exactly as
 %% cx_tenant does. Tenant scoping, where it applies, is a FIELD (tenant_id)
 %% plus the token's tenant claim, never the key; cross-tenant domain data
-%% stays inexpressible because none of these rows carry it. See
-%% docs/inhouse-auth-design.md.
+%% stays inexpressible because none of these rows carry it.
 
 %% The PERSON. One identity : many cx_user rows (one per tenant), joined by
 %% #cx_user.subject. email is the global login handle (indexed, unique).
-%% password_hash is a PHC string; undefined for a federated identity (v2).
+%% password_hash is a PHC string; undefined for a federated identity whose
+%% credential lives in an external IdP.
 %% Lockout is temporal (locked_until), distinct from administrative status.
 -record(cx_identity, {
     subject :: binary(),
@@ -218,8 +218,8 @@
 
 %% An OAuth client. client_id is globally unique. tenant_id = undefined for
 %% first-party global clients (the SPA and mobile app); set for per-tenant
-%% integrator clients (client_credentials, onboarded later). secret_hash is
-%% a SHA-256 of the client secret, present only for confidential clients.
+%% integrator clients using the client_credentials grant. secret_hash is a
+%% SHA-256 of the client secret, present only for confidential clients.
 -record(cx_oauth_client, {
     client_id :: binary(),
     tenant_id :: binary() | undefined,
@@ -239,8 +239,8 @@
 %% typed atom() and refined at the cx_auth boundary. private_jwk is the
 %% signing half; public_jwk is the JWKS-publishable half, `undefined` for a
 %% symmetric key (no public half). status: active (sign with the newest) |
-%% retiring (verify only, kept until its longest-lived token expires). At
-%% rest this is filesystem-perms only in v1 (design §8).
+%% retiring (verify only, kept until its longest-lived token expires). The
+%% private half is protected at rest by filesystem permissions only.
 -record(cx_signing_key, {
     kid :: binary(),
     alg :: atom(),

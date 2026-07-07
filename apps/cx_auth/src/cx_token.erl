@@ -1,7 +1,7 @@
 -module(cx_token).
 
-%% Mints cx's own signed tokens (design §6), the issuing half the codebase
-%% never had. Access tokens follow the RFC 9068 JWT profile (typ at+jwt,
+%% Mints cx's own signed tokens. Access tokens follow the RFC 9068 JWT
+%% profile (typ at+jwt,
 %% iss/exp/aud/sub/client_id/iat/jti, optional scope + act_as_tenant); ID
 %% tokens follow OIDC Core (aud = client_id, optional nonce). Signed with
 %% the active key from cx_signing_keys; the existing cx_auth_jwt path
