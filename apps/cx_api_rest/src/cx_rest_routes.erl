@@ -41,6 +41,10 @@ routes() ->
     [
         {"/healthz", cx_handler_health, #{}},
 
+        %% OpenID Provider metadata — public/auth-exempt (cx_rest_auth_middleware)
+        {"/.well-known/openid-configuration", cx_handler_oidc_metadata, #{}},
+        {"/.well-known/jwks.json", cx_handler_jwks, #{}},
+
         %% push transport — auth is in-band (first frame), see cx_handler_socket
         {"/api/v1/socket", cx_handler_socket, #{}},
 

@@ -20,6 +20,11 @@ execute(Req, Env = #{handler := cx_handler_socket}) ->
 %% data-serving cowboy_static route without revisiting this bypass.
 execute(Req, Env = #{handler := cowboy_static}) ->
     {ok, Req, Env};
+%% OpenID Provider discovery + JWKS are public by definition — no token.
+execute(Req, Env = #{handler := cx_handler_jwks}) ->
+    {ok, Req, Env};
+execute(Req, Env = #{handler := cx_handler_oidc_metadata}) ->
+    {ok, Req, Env};
 execute(Req, Env = #{handler_opts := Opts}) ->
     Authorization = cowboy_req:header(<<"authorization">>, Req, <<>>),
     case cx_auth:authenticate(Authorization) of
