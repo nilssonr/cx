@@ -114,5 +114,40 @@ table_specs() ->
         ]},
         {cx_presence_effective, [
             {attributes, record_info(fields, cx_presence_effective)}, {type, set}, Ram
+        ]},
+
+        %% Issuer-level auth tables (OAuth2/OIDC provider): bare-keyed, not
+        %% {TenantId, Id} — the identity/issuer layer above tenants (see
+        %% cx_core.hrl). Authorization codes are ephemeral (Ram); provider
+        %% sessions are Disc so Remember-me survives a restart.
+        {cx_identity, [
+            {attributes, record_info(fields, cx_identity)},
+            {type, set},
+            Disc,
+            {index, [#cx_identity.email]}
+        ]},
+        {cx_oauth_client, [
+            {attributes, record_info(fields, cx_oauth_client)},
+            {type, set},
+            Disc,
+            {index, [#cx_oauth_client.tenant_id]}
+        ]},
+        {cx_signing_key, [
+            {attributes, record_info(fields, cx_signing_key)}, {type, set}, Disc
+        ]},
+        {cx_refresh_token, [
+            {attributes, record_info(fields, cx_refresh_token)},
+            {type, set},
+            Disc,
+            {index, [#cx_refresh_token.subject, #cx_refresh_token.session_id]}
+        ]},
+        {cx_authorization_code, [
+            {attributes, record_info(fields, cx_authorization_code)}, {type, set}, Ram
+        ]},
+        {cx_provider_session, [
+            {attributes, record_info(fields, cx_provider_session)},
+            {type, set},
+            Disc,
+            {index, [#cx_provider_session.subject]}
         ]}
     ].

@@ -23,7 +23,10 @@
     interactions/1,
     agent_snapshots/1,
     presence_declarations/1,
-    presence_effective/1
+    presence_effective/1,
+    identities/0,
+    oauth_clients/0,
+    signing_keys/0
 ]).
 
 tenants() -> #cx_tenant{_ = '_'}.
@@ -56,3 +59,10 @@ agent_snapshots(TenantId) -> #cx_agent_snapshot{key = {TenantId, '_'}, _ = '_'}.
 presence_declarations(TenantId) -> #cx_presence_declaration{key = {TenantId, '_'}, _ = '_'}.
 
 presence_effective(TenantId) -> #cx_presence_effective{key = {TenantId, '_'}, _ = '_'}.
+
+%% Issuer-level auth tables are global (not tenant-keyed): full-table listing.
+identities() -> #cx_identity{_ = '_'}.
+
+oauth_clients() -> #cx_oauth_client{_ = '_'}.
+
+signing_keys() -> #cx_signing_key{_ = '_'}.

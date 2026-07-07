@@ -35,6 +35,8 @@ catalog_covers_all_checked_permissions_test() ->
         <<"agent:session:any">>,
         <<"agent:session:self">>,
         <<"agent:wrapup:self">>,
+        <<"identities:read">>,
+        <<"identities:write">>,
         <<"interactions:cancel">>,
         <<"interactions:create">>,
         <<"interactions:read">>,

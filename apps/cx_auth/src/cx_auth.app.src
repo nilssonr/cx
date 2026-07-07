@@ -13,7 +13,22 @@
         jose,
         cx_core
     ]},
-    {env, []},
+    {env, [
+        %% Built-in issuer (OAuth2/OIDC provider) defaults — production-safe;
+        %% consumed from Phase 2 on (see docs/inhouse-auth-design.md). The
+        %% bootstrap-admin and first-party client SEEDS live in sys.config
+        %% with their consumers (Phases 1 and 3), never as a default here.
+        {signing_alg, <<"RS256">>},
+        {signing_key_bits, 2048},
+        {password_pbkdf2_iterations, 210000},
+        {token_access_ttl_s, 600},
+        {token_refresh_ttl_s, 2592000},
+        {token_refresh_idle_ttl_s, 1209600},
+        {authorization_code_ttl_s, 60},
+        {session_idle_ttl_s, 3600},
+        {session_absolute_ttl_s, 36000},
+        {session_remember_ttl_s, 2592000}
+    ]},
     {modules, []},
     {licenses, []},
     {links, []}

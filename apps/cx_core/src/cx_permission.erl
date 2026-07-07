@@ -47,7 +47,13 @@ tenant_assignable() ->
 
 -spec platform_only() -> [binary()].
 platform_only() ->
-    [<<"tenants:admin">>].
+    [
+        %% cx_identity is the global person (email + credential), above
+        %% tenants — provisioning one is platform authority, never tenant.
+        <<"identities:read">>,
+        <<"identities:write">>,
+        <<"tenants:admin">>
+    ].
 
 -spec is_tenant_assignable(term()) -> boolean().
 is_tenant_assignable(Permission) ->
