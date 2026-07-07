@@ -85,7 +85,7 @@ admin_crud_roundtrip(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Acme">>}),
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
 
     %% skill with tenant-defined levels
     {200, #{<<"id">> := SkillId}} =
@@ -179,7 +179,7 @@ admin_crud_roundtrip(Config) ->
     [#{<<"skill_id">> := SkillId, <<"rank">> := 2}] = SkillsOut,
     %% escalation guard over the wire: the wildcard and platform-only
     %% perms are not tenant-assignable
-    {422, #{<<"error">> := <<"invalid:permissions">>}} =
+    {422, #{<<"errors">> := [#{<<"field">> := <<"permissions">>}]}} =
         req(
             Config,
             post,
@@ -187,7 +187,7 @@ admin_crud_roundtrip(Config) ->
             Admin,
             #{<<"name">> => <<"Escalate">>, <<"permissions">> => [<<"*">>]}
         ),
-    {422, #{<<"error">> := <<"invalid:permissions">>}} =
+    {422, #{<<"errors">> := [#{<<"field">> := <<"permissions">>}]}} =
         req(
             Config,
             post,
@@ -198,7 +198,7 @@ admin_crud_roundtrip(Config) ->
                 <<"permissions">> => [<<"tenants:admin">>]
             }
         ),
-    {422, #{<<"error">> := <<"invalid:levels">>}} =
+    {422, #{<<"errors">> := [#{<<"field">> := <<"levels">>}]}} =
         req(
             Config,
             post,
@@ -211,7 +211,7 @@ admin_crud_roundtrip(Config) ->
         ),
     %% referential integrity over the wire: unknown skill on a user is
     %% 422; deleting a referenced skill/profile/role is 409
-    {422, #{<<"error">> := <<"invalid:skills">>}} =
+    {422, #{<<"errors">> := [#{<<"field">> := <<"skills">>}]}} =
         req(
             Config,
             post,
@@ -223,21 +223,21 @@ admin_crud_roundtrip(Config) ->
                 <<"skills">> => [#{<<"skill_id">> => <<"ghost">>, <<"rank">> => 1}]
             }
         ),
-    {409, #{<<"error">> := <<"in_use">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:in_use">>}} =
         req(Config, delete, Base ++ "/skills/" ++ binary_to_list(SkillId), Admin),
-    {409, #{<<"error">> := <<"in_use">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:in_use">>}} =
         req(
             Config,
             delete,
             Base ++ "/routing-profiles/" ++ binary_to_list(ProfileId),
             Admin
         ),
-    {409, #{<<"error">> := <<"in_use">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:in_use">>}} =
         req(Config, delete, Base ++ "/roles/" ++ binary_to_list(RoleId), Admin),
     %% dropping the user is not enough — the queue's skill_requirements still
     %% hold the skill, so it stays blocked
     {204, _} = req(Config, delete, Base ++ "/users/" ++ binary_to_list(UserId), Admin),
-    {409, #{<<"error">> := <<"in_use">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:in_use">>}} =
         req(Config, delete, Base ++ "/skills/" ++ binary_to_list(SkillId), Admin),
     {404, _} = req(Config, delete, Base ++ "/not-ready-reasons/x", Admin),
     ok.
@@ -249,20 +249,24 @@ cross_tenant_forbidden(Config) ->
     {200, #{<<"id">> := T2}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Two">>}),
 
-    %% a T2-scoped user token must not touch T1's config
+    %% a T2-scoped user token cannot reach T1 by naming it in X-Tenant-Id
     AdminT2 = user_token(Config, T2, <<"t2-admin">>, [
         <<"queues:read">>,
         <<"queues:write">>
     ]),
-    Base1 = binary_to_list(<<"/api/v1/tenants/", T1/binary>>),
-    {403, _} = req(Config, get, Base1 ++ "/queues", AdminT2),
+    T1Header = [{"x-tenant-id", binary_to_list(T1)}],
+    {403, _} = req(Config, get, "/api/v1/queues", AdminT2, none, T1Header),
     {403, _} = req(
         Config,
         post,
-        Base1 ++ "/queues",
+        "/api/v1/queues",
         AdminT2,
-        #{<<"name">> => <<"sneaky">>}
+        #{<<"name">> => <<"sneaky">>},
+        T1Header
     ),
+
+    %% a platform admin (wildcard perms) crosses tenants via the same header
+    {200, _} = req(Config, get, "/api/v1/queues", Boss, none, T1Header),
     ok.
 
 agent_open_media_flow(Config) ->
@@ -270,7 +274,7 @@ agent_open_media_flow(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Flow">>}),
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
 
     MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
@@ -380,7 +384,7 @@ qualification_wrapup_flow(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Qual">>}),
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
 
     %% tree CRUD via the generic handler
     {200, #{<<"id">> := TopicA, <<"parent_id">> := null}} =
@@ -394,7 +398,7 @@ qualification_wrapup_flow(Config) ->
         }),
     {200, Codes} = req(Config, get, Base ++ "/qualification-codes", Admin),
     ?assertEqual(2, length(Codes)),
-    {409, #{<<"error">> := <<"in_use">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:in_use">>}} =
         req(Config, delete, Base ++ "/qualification-codes/" ++ binary_to_list(TopicA), Admin),
 
     {200, #{<<"id">> := QueueId}} =
@@ -441,7 +445,7 @@ qualification_wrapup_flow(Config) ->
 
     %% hold/resume ride along over HTTP
     {204, _} = req(Config, post, IPath ++ "/hold", Agent, #{}),
-    {409, #{<<"error">> := <<"not_active">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:not_active">>}} =
         req(Config, post, IPath ++ "/hold", Agent, #{}),
     {204, _} = req(Config, post, IPath ++ "/resume", Agent, #{}),
 
@@ -449,7 +453,7 @@ qualification_wrapup_flow(Config) ->
         req(Config, post, IPath ++ "/complete", Agent, #{}),
 
     %% finalize is blocked until codes are entered
-    {409, #{<<"error">> := <<"qualification_required">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:qualification_required">>}} =
         req(Config, post, IPath ++ "/wrapup/finalize", Agent, #{}),
     {422, _} =
         req(Config, put, IPath ++ "/qualifications", Agent, #{
@@ -489,7 +493,7 @@ self_force_sign_out_qualification_409(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Force">>}),
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
     {200, #{<<"id">> := QueueId}} =
         req(Config, post, Base ++ "/queues", Admin, #{
             <<"name">> => <<"q">>,
@@ -537,9 +541,9 @@ self_force_sign_out_qualification_409(Config) ->
         ),
 
     %% unqualified ACW blocks both plain and forced self sign-out
-    {409, #{<<"error">> := <<"qualification_required">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:qualification_required">>}} =
         req(Config, delete, "/api/v1/agent/session", Agent),
-    {409, #{<<"error">> := <<"qualification_required">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:qualification_required">>}} =
         req(Config, delete, "/api/v1/agent/session?force=true", Agent),
 
     %% the supervisor authority overrides the gate on a live session
@@ -557,7 +561,7 @@ ready_reason_null_roundtrip(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Null">>}),
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
     {200, #{<<"id">> := ReasonId}} =
         req(Config, post, Base ++ "/not-ready-reasons", Admin, #{
             <<"name">> => <<"Lunch">>
@@ -610,7 +614,7 @@ read_surface_and_pagination(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Reads">>}),
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
     {200, #{<<"id">> := QueueId}} =
         req(Config, post, Base ++ "/queues", Admin, #{
             <<"name">> => <<"q">>,
@@ -683,7 +687,7 @@ read_surface_and_pagination(Config) ->
         req(Config, get, "/api/v1/agent/session", Agent),
     {200, []} = req(Config, get, "/api/v1/agent/interactions", Agent),
     %% a reason on "ready" is a client bug, not something to drop silently
-    {422, #{<<"error">> := <<"invalid:reason_id">>}} =
+    {422, #{<<"errors">> := [#{<<"field">> := <<"reason_id">>}]}} =
         req(Config, put, "/api/v1/agent/media/open_media/state", Agent, #{
             <<"state">> => <<"ready">>,
             <<"reason_id">> => ReasonId
@@ -758,7 +762,7 @@ integrator_cancel_rules(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"C">>}),
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
     MediaId = <<"open_media">>,
     {200, #{<<"id">> := QueueId}} =
         req(Config, post, Base ++ "/queues", Admin, #{<<"name">> => <<"q">>}),
@@ -786,7 +790,7 @@ integrator_cancel_rules(Config) ->
     %% and the row remains readable as `cancelled`
     {204, _} = req(Config, post, Path ++ "/cancel", Integrator, #{}),
     {200, #{<<"state">> := <<"cancelled">>}} = req(Config, get, Path, Integrator),
-    {409, #{<<"error">> := <<"not_cancellable">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:not_cancellable">>}} =
         req(Config, post, Path ++ "/cancel", Integrator, #{}),
     %% the old DELETE is gone
     {405, _} = req(Config, delete, Path, Integrator),
@@ -809,7 +813,7 @@ integrator_cancel_rules(Config) ->
         Admin,
         #{<<"status">> => <<"closed">>}
     ),
-    {409, #{<<"error">> := <<"queue_closed">>}} =
+    {409, #{<<"type">> := <<"urn:cx:error:queue_closed">>}} =
         req(
             Config,
             post,
@@ -824,7 +828,7 @@ forbidden_without_permission(Config) ->
     {200, #{<<"id">> := TenantId}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"F">>}),
     Nobody = user_token(Config, TenantId, <<"nobody">>, []),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
     {403, _} = req(
         Config,
         post,
@@ -857,7 +861,7 @@ boss_token(Config, TenantId) ->
 %% mints a token for that user's subject.
 user_token(Config, TenantId, Subject, Permissions) ->
     Admin = boss_token(Config, TenantId),
-    Base = binary_to_list(<<"/api/v1/tenants/", TenantId/binary>>),
+    Base = "/api/v1",
     {200, #{<<"id">> := RoleId}} =
         req(
             Config,
@@ -908,13 +912,13 @@ req(Config, Method, Path, Token) ->
 req(Config, Method, Path, Token, Body) ->
     req(Config, Method, Path, Token, Body, []).
 
-req(Config, Method, Path, Token, Body, _Opts) ->
+req(Config, Method, Path, Token, Body, ExtraHeaders) ->
     Port = proplists:get_value(port, Config),
     Url = "http://127.0.0.1:" ++ integer_to_list(Port) ++ Path,
     Headers =
         case Token of
-            none -> [];
-            _ -> [{"authorization", "Bearer " ++ binary_to_list(Token)}]
+            none -> ExtraHeaders;
+            _ -> [{"authorization", "Bearer " ++ binary_to_list(Token)} | ExtraHeaders]
         end,
     Request =
         case Body of
@@ -951,7 +955,7 @@ presence_roundtrip(Config) ->
         }),
     {200, #{<<"manual_state">> := <<"busy">>, <<"device_count">> := 0}} =
         req(Config, get, "/api/v1/presence", User),
-    {422, #{<<"error">> := <<"invalid:state">>}} =
+    {422, #{<<"errors">> := [#{<<"field">> := <<"state">>}]}} =
         req(Config, put, "/api/v1/presence", User, #{<<"state">> => <<"invisible">>}),
     {200, Entries} = req(Config, get, "/api/v1/presence/directory", User),
     ?assert(
