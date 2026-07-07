@@ -1,21 +1,30 @@
 -module(cx_oauth_client).
 
-%% OAuth clients. client_id is globally unique. Confidential clients present a
-%% secret, verified constant-time against a stored SHA-256 (secrets are
-%% high-entropy, so a fast hash is sufficient — PBKDF2 is for human
-%% passwords). Public clients (the SPA and mobile app) have no secret and
-%% rely on PKCE.
+%% OAuth clients resolve from two places, checked in order:
+%%   1. Internal applications (the SPA, the mobile app) declared in config
+%%      (cx_auth first_party_clients). These are deployment constants — their
+%%      client_id and redirect URIs are shared with the frontend build — so
+%%      config is their source of truth, read live (no drift, no seeding).
+%%      They are always PUBLIC: config never carries a secret.
+%%   2. Everything else (third-party integrator clients) lives in the
+%%      cx_oauth_client Mnesia table, created via store/1, and is confidential
+%%      with a SHA-256 of its secret.
+%% A config-declared client_id shadows any Mnesia row of the same id.
 
 -include("cx_core.hrl").
 
--export([fetch/1, authenticate/2, ensure_seed/1, hash_secret/1]).
+-export([fetch/1, authenticate/2, store/1]).
 
+%% Resolve a client: config-declared internal app first, then the Mnesia table.
 -spec fetch(binary()) -> {ok, #cx_oauth_client{}} | {error, not_found}.
 fetch(ClientId) ->
-    cx_store:read(cx_oauth_client, ClientId).
+    case first_party(ClientId) of
+        {ok, Client} -> {ok, Client};
+        none -> cx_store:read(cx_oauth_client, ClientId)
+    end.
 
-%% Resolve + authenticate a client. A confidential client must present the
-%% correct secret; a public client must present none.
+%% Resolve + authenticate. A confidential client must present the correct
+%% secret (constant-time compare); a public client must present none.
 -spec authenticate(binary(), binary() | undefined) ->
     {ok, #cx_oauth_client{}} | {error, invalid_client}.
 authenticate(ClientId, Secret) ->
@@ -25,27 +34,39 @@ authenticate(ClientId, Secret) ->
         {error, not_found} -> {error, invalid_client}
     end.
 
--spec hash_secret(binary()) -> binary().
-hash_secret(Secret) ->
-    crypto:hash(sha256, Secret).
-
-%% Seed a first-party client at boot if absent (idempotent), from a config
-%% map: #{client_id, type, grant_types, redirect_uris, scopes, tenant_id?,
-%% secret?}.
--spec ensure_seed(map()) -> ok.
-ensure_seed(#{client_id := ClientId} = Spec) when is_binary(ClientId) ->
+%% Write a client to Mnesia — the registration/admin-API path for third-party
+%% clients (internal apps live in config, not here). Secret is hashed.
+-spec store(map()) -> ok.
+store(#{client_id := ClientId} = Spec) when is_binary(ClientId) ->
     Now = cx_time:now_ms(),
-    _ = cx_store:tx(fun() ->
-        case mnesia:read(cx_oauth_client, ClientId) of
-            [] -> mnesia:write(from_spec(ClientId, Spec, Now));
-            [_] -> ok
-        end
-    end),
-    ok;
-ensure_seed(_) ->
-    ok.
+    ok = cx_store:tx(fun() -> mnesia:write(from_spec(ClientId, Spec, Now)) end).
 
 %% ---- internals ----
+
+%% Resolve an internal application from config. Forced public with no secret:
+%% config is the wrong place for a credential, and the SPA/mobile cannot keep
+%% one anyway.
+first_party(ClientId) ->
+    Specs = cx_config:get(cx_auth, first_party_clients, []),
+    case [S || S <- Specs, is_map(S), maps:get(client_id, S, undefined) =:= ClientId] of
+        [Spec | _] -> {ok, config_client(ClientId, Spec)};
+        [] -> none
+    end.
+
+config_client(ClientId, Spec) ->
+    #cx_oauth_client{
+        client_id = ClientId,
+        tenant_id = undefined,
+        name = maps:get(name, Spec, ClientId),
+        client_type = public,
+        grant_types = maps:get(grant_types, Spec, []),
+        redirect_uris = maps:get(redirect_uris, Spec, []),
+        scopes = maps:get(scopes, Spec, []),
+        secret_hash = undefined,
+        status = active,
+        created_at = 0,
+        updated_at = 0
+    }.
 
 check_secret(Client = #cx_oauth_client{client_type = public, secret_hash = undefined}, _Secret) ->
     {ok, Client};
@@ -64,15 +85,18 @@ from_spec(ClientId, Spec, Now) ->
         client_id = ClientId,
         tenant_id = maps:get(tenant_id, Spec, undefined),
         name = maps:get(name, Spec, ClientId),
-        client_type = maps:get(type, Spec, public),
+        client_type = maps:get(type, Spec, confidential),
         grant_types = maps:get(grant_types, Spec, []),
         redirect_uris = maps:get(redirect_uris, Spec, []),
         scopes = maps:get(scopes, Spec, []),
-        secret_hash = seed_secret(Spec),
+        secret_hash = spec_secret(Spec),
         status = active,
         created_at = Now,
         updated_at = Now
     }.
 
-seed_secret(#{secret := Secret}) when is_binary(Secret) -> hash_secret(Secret);
-seed_secret(_) -> undefined.
+spec_secret(#{secret := Secret}) when is_binary(Secret) -> hash_secret(Secret);
+spec_secret(_) -> undefined.
+
+hash_secret(Secret) ->
+    crypto:hash(sha256, Secret).

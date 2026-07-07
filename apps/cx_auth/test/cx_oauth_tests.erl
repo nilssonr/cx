@@ -26,11 +26,21 @@ setup() ->
     application:set_env(cx_auth, signing_source, cx_signing_key_generated),
     application:set_env(cx_auth, signing_source_opts, #{rsa_bits => 1024}),
     application:set_env(cx_auth, key_source, local),
+    %% internal app (public) declared in config; integrator (confidential) in Mnesia
+    application:set_env(cx_auth, first_party_clients, [
+        #{
+            client_id => <<"spa">>,
+            type => public,
+            grant_types => [<<"authorization_code">>, <<"refresh_token">>],
+            redirect_uris => [<<"https://app/cb">>],
+            scopes => [<<"openid">>]
+        }
+    ]),
     {ok, _} = application:ensure_all_started(jose),
     ok = jose:json_module(cx_jose_json),
     ok = cx_db:init(),
     {ok, Pid} = cx_signing_keys:start_link(),
-    ok = cx_oauth_client:ensure_seed(#{
+    ok = cx_oauth_client:store(#{
         client_id => <<"svc">>,
         type => confidential,
         secret => <<"svc-secret">>,
@@ -38,17 +48,11 @@ setup() ->
         grant_types => [<<"client_credentials">>],
         scopes => [<<"interactions:read">>]
     }),
-    ok = cx_oauth_client:ensure_seed(#{
-        client_id => <<"spa">>,
-        type => public,
-        grant_types => [<<"authorization_code">>, <<"refresh_token">>],
-        redirect_uris => [<<"https://app/cb">>],
-        scopes => [<<"openid">>]
-    }),
     Pid.
 
 cleanup(Pid) ->
     gen_server:stop(Pid),
+    application:unset_env(cx_auth, first_party_clients),
     mnesia:stop(),
     ok.
 

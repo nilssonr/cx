@@ -25,14 +25,6 @@ init_per_suite(Config) ->
     set(cx_auth, signing_source_opts, #{rsa_bits => 1024}),
     set(cx_auth, first_party_clients, [
         #{
-            client_id => <<"svc">>,
-            type => confidential,
-            secret => <<"svc-secret">>,
-            tenant_id => <<"t1">>,
-            grant_types => [<<"client_credentials">>],
-            scopes => [<<"interactions:read">>]
-        },
-        #{
             client_id => <<"spa">>,
             type => public,
             grant_types => [<<"authorization_code">>, <<"refresh_token">>],
@@ -42,6 +34,15 @@ init_per_suite(Config) ->
     ]),
     {ok, _} = application:ensure_all_started(cx_api_rest),
     {ok, _} = application:ensure_all_started(inets),
+    %% the confidential integrator client lives in Mnesia, not config
+    ok = cx_oauth_client:store(#{
+        client_id => <<"svc">>,
+        type => confidential,
+        secret => <<"svc-secret">>,
+        tenant_id => <<"t1">>,
+        grant_types => [<<"client_credentials">>],
+        scopes => [<<"interactions:read">>]
+    }),
     Port = ranch:get_port(cx_http),
     [{port, Port} | Config].
 
