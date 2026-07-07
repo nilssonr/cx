@@ -9,7 +9,10 @@
         crypto
     ]},
     {env, [
-        {mnesia_dir, "data/mnesia"}
+        {mnesia_dir, "data/mnesia"},
+        {password_pbkdf2_iterations, 210000},
+        {login_max_failures, 5},
+        {login_lockout_ms, 900000}
     ]},
     {modules, []},
     {licenses, []},

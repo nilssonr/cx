@@ -16,6 +16,8 @@ get_keys() ->
             ];
         {ok, {jwks, _Url}} ->
             cx_jwks_cache:get_keys();
+        {ok, local} ->
+            cx_signing_keys:verification_keys();
         undefined ->
             []
     end.

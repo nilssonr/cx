@@ -13,7 +13,18 @@
         jose,
         cx_core
     ]},
-    {env, []},
+    {env, [
+        {signing_alg, rs256},
+        {signing_source, cx_signing_key_generated},
+        {signing_source_opts, #{rsa_bits => 2048}},
+        {token_access_ttl_s, 600},
+        {token_refresh_ttl_s, 2592000},
+        {token_refresh_idle_ttl_s, 1209600},
+        {authorization_code_ttl_s, 60},
+        {session_idle_ttl_s, 3600},
+        {session_absolute_ttl_s, 36000},
+        {session_remember_ttl_s, 2592000}
+    ]},
     {modules, []},
     {licenses, []},
     {links, []}
