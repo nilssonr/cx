@@ -18,7 +18,8 @@
         {acceptors, 10},
         {ws_auth_timeout_ms, 10000},
         {ws_idle_timeout_ms, 60000},
-        {ws_max_queue, 1000}
+        {ws_max_queue, 1000},
+        {expose_openapi, true}
     ]},
     {modules, []},
     {licenses, []},

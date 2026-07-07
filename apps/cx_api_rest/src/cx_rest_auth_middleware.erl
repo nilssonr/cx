@@ -15,16 +15,22 @@ execute(Req, Env = #{handler := cx_handler_health}) ->
 %% path — see cx_handler_socket.
 execute(Req, Env = #{handler := cx_handler_socket}) ->
     {ok, Req, Env};
+%% Docs surface (OpenAPI spec + Scalar UI) is public — cowboy_static is only
+%% ever routed here (see cx_rest_routes:docs_routes/0). Do not mount a
+%% data-serving cowboy_static route without revisiting this bypass.
+execute(Req, Env = #{handler := cowboy_static}) ->
+    {ok, Req, Env};
 execute(Req, Env = #{handler_opts := Opts}) ->
     Authorization = cowboy_req:header(<<"authorization">>, Req, <<>>),
     case cx_auth:authenticate(Authorization) of
         {ok, Context} ->
             {ok, Req, Env#{handler_opts => Opts#{context => Context}}};
         {error, unauthorized} ->
+            {Status, Body} = cx_handler:problem(unauthorized),
             Req1 = cowboy_req:reply(
-                401,
-                #{<<"content-type">> => <<"application/json">>},
-                cx_json:encode(#{<<"error">> => <<"unauthorized">>}),
+                Status,
+                #{<<"content-type">> => <<"application/problem+json">>},
+                cx_json:encode(Body),
                 Req
             ),
             {stop, Req1}

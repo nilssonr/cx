@@ -1,0 +1,1838 @@
+openapi: 3.1.1
+info:
+  title: cx REST API
+  version: "0.1.0"
+  description: |
+    HTTP API for the cx multi-tenant contact center.
+
+    Authentication is a Bearer JWT (OIDC / JWKS) on every endpoint except
+    `GET /healthz`. Errors use RFC 9457 Problem Details
+    (`application/problem+json`); the `type` is a stable `urn:cx:error:<name>`
+    URN and field-validation failures carry an `errors` array.
+
+    The caller's tenant comes from the token. Admin endpoints act on that
+    tenant by default; a platform admin (holding `tenants:admin`) targets a
+    different tenant with the `X-Tenant-Id` header.
+
+    Each operation's required permission is its security requirement: the value
+    listed under `bearerAuth` is the permission (a role name) the caller's roles
+    must include. Per OpenAPI 3.1.1 these are role names "required for the
+    execution, but not otherwise defined or exchanged in-band" — they are
+    enforced server-side and are not scopes carried in the token. An empty
+    `bearerAuth: []` means any authenticated caller.
+
+    The realtime push channel `GET /api/v1/socket` is a WebSocket that
+    authenticates in-band on its first frame; it is not expressible in
+    OpenAPI and is intentionally omitted here.
+
+servers:
+  - url: /
+    description: Same origin as the docs page.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Users
+    description: Tenant users and their roles, skills, and routing profile.
+  - name: Roles
+    description: Permission bundles assignable to users.
+  - name: Skills
+    description: Skills and their proficiency levels.
+  - name: Queues
+    description: Queues, skill requirements, and wrap-up policy.
+  - name: Routing Profiles
+    description: Concurrency limits and media-mix guards for agents.
+  - name: Not-Ready Reasons
+    description: Reasons an agent can select when going not-ready.
+  - name: Qualification Codes
+    description: Disposition codes applied to interactions.
+  - name: Tenants
+    description: Platform-level tenant administration.
+  - name: Agent
+    description: Agent session, readiness, offers, and owned interactions.
+  - name: Interactions
+    description: Integrator surface for creating and inspecting interactions.
+  - name: Presence
+    description: Collaboration presence (separate from router readiness).
+  - name: System
+    description: Health and infrastructure.
+
+paths:
+  /healthz:
+    get:
+      tags: [System]
+      operationId: health
+      summary: Liveness probe (unauthenticated).
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                required: [status]
+
+  /api/v1/tenants:
+    post:
+      tags: [Tenants]
+      operationId: createTenant
+      summary: Create a tenant.
+      security:
+        - bearerAuth: [tenants:admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantCreate" }
+      responses:
+        "200":
+          description: The created tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tenant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Validation" }
+    get:
+      tags: [Tenants]
+      operationId: listTenants
+      summary: List all tenants.
+      security:
+        - bearerAuth: [tenants:admin]
+      responses:
+        "200":
+          description: All tenants.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Tenant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenants/{tenant_id}:
+    parameters:
+      - $ref: "#/components/parameters/TenantId"
+    get:
+      tags: [Tenants]
+      operationId: getTenant
+      summary: Fetch a tenant.
+      description: Reading your own tenant needs no permission; another requires `tenants:admin`.
+      responses:
+        "200":
+          description: The tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tenant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Tenants]
+      operationId: updateTenant
+      summary: Update a tenant.
+      security:
+        - bearerAuth: [tenants:admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantUpdate" }
+      responses:
+        "200":
+          description: The updated tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tenant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Tenants]
+      operationId: deleteTenant
+      summary: Delete a tenant.
+      security:
+        - bearerAuth: [tenants:admin]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/users:
+    parameters:
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users.
+      security:
+        - bearerAuth: [users:read]
+      responses:
+        "200":
+          description: Users in the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a user.
+      security:
+        - bearerAuth: [users:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserCreate" }
+      responses:
+        "200":
+          description: The created user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: Fetch a user.
+      security:
+        - bearerAuth: [users:read]
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Users]
+      operationId: updateUser
+      summary: Update a user.
+      security:
+        - bearerAuth: [users:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdate" }
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      summary: Delete a user.
+      security:
+        - bearerAuth: [users:write]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/users/{id}/agent-session:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    delete:
+      tags: [Agent]
+      operationId: forceStopAgentSession
+      summary: Force-sign-out another agent.
+      description: >-
+        Requeues engaged work, finalizes ACW, overrides mandatory codes.
+        Idempotent.
+      security:
+        - bearerAuth: [agent:session:any]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/roles:
+    parameters:
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Roles]
+      operationId: listRoles
+      summary: List roles.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: Roles in the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Role" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Roles]
+      operationId: createRole
+      summary: Create a role.
+      security:
+        - bearerAuth: [roles:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleCreate" }
+      responses:
+        "200":
+          description: The created role.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/roles/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Roles]
+      operationId: getRole
+      summary: Fetch a role.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: The role.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Roles]
+      operationId: updateRole
+      summary: Update a role.
+      security:
+        - bearerAuth: [roles:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleUpdate" }
+      responses:
+        "200":
+          description: The updated role.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Roles]
+      operationId: deleteRole
+      summary: Delete a role.
+      description: Fails if the role is assigned to a user.
+      security:
+        - bearerAuth: [roles:write]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/skills:
+    parameters:
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Skills]
+      operationId: listSkills
+      summary: List skills.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: Skills in the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Skill" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Skills]
+      operationId: createSkill
+      summary: Create a skill.
+      security:
+        - bearerAuth: [skills:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SkillCreate" }
+      responses:
+        "200":
+          description: The created skill.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/skills/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Skills]
+      operationId: getSkill
+      summary: Fetch a skill.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: The skill.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Skills]
+      operationId: updateSkill
+      summary: Update a skill.
+      security:
+        - bearerAuth: [skills:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SkillUpdate" }
+      responses:
+        "200":
+          description: The updated skill.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Skills]
+      operationId: deleteSkill
+      summary: Delete a skill.
+      description: Fails if held by a user or required by a queue.
+      security:
+        - bearerAuth: [skills:write]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/queues:
+    parameters:
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Queues]
+      operationId: listQueues
+      summary: List queues.
+      security:
+        - bearerAuth: [queues:read]
+      responses:
+        "200":
+          description: Queues in the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Queue" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Queues]
+      operationId: createQueue
+      summary: Create a queue.
+      security:
+        - bearerAuth: [queues:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QueueCreate" }
+      responses:
+        "200":
+          description: The created queue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Queue" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/queues/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Queues]
+      operationId: getQueue
+      summary: Fetch a queue.
+      security:
+        - bearerAuth: [queues:read]
+      responses:
+        "200":
+          description: The queue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Queue" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Queues]
+      operationId: updateQueue
+      summary: Update a queue.
+      security:
+        - bearerAuth: [queues:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QueueUpdate" }
+      responses:
+        "200":
+          description: The updated queue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Queue" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Queues]
+      operationId: deleteQueue
+      summary: Delete a queue.
+      security:
+        - bearerAuth: [queues:write]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/routing-profiles:
+    parameters:
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Routing Profiles]
+      operationId: listRoutingProfiles
+      summary: List routing profiles.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: Routing profiles in the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RoutingProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Routing Profiles]
+      operationId: createRoutingProfile
+      summary: Create a routing profile.
+      security:
+        - bearerAuth: [routing_profiles:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoutingProfileCreate" }
+      responses:
+        "200":
+          description: The created routing profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/routing-profiles/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Routing Profiles]
+      operationId: getRoutingProfile
+      summary: Fetch a routing profile.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: The routing profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Routing Profiles]
+      operationId: updateRoutingProfile
+      summary: Update a routing profile.
+      security:
+        - bearerAuth: [routing_profiles:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoutingProfileUpdate" }
+      responses:
+        "200":
+          description: The updated routing profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Routing Profiles]
+      operationId: deleteRoutingProfile
+      summary: Delete a routing profile.
+      description: Fails if referenced by a user.
+      security:
+        - bearerAuth: [routing_profiles:write]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/not-ready-reasons:
+    parameters:
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Not-Ready Reasons]
+      operationId: listNotReadyReasons
+      summary: List not-ready reasons.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: Not-ready reasons in the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotReadyReason" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Not-Ready Reasons]
+      operationId: createNotReadyReason
+      summary: Create a not-ready reason.
+      security:
+        - bearerAuth: [not_ready_reasons:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotReadyReasonCreate" }
+      responses:
+        "200":
+          description: The created not-ready reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotReadyReason" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/not-ready-reasons/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Not-Ready Reasons]
+      operationId: getNotReadyReason
+      summary: Fetch a not-ready reason.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: The not-ready reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotReadyReason" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Not-Ready Reasons]
+      operationId: updateNotReadyReason
+      summary: Update a not-ready reason.
+      security:
+        - bearerAuth: [not_ready_reasons:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotReadyReasonUpdate" }
+      responses:
+        "200":
+          description: The updated not-ready reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotReadyReason" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Not-Ready Reasons]
+      operationId: deleteNotReadyReason
+      summary: Delete a not-ready reason.
+      security:
+        - bearerAuth: [not_ready_reasons:write]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/qualification-codes:
+    parameters:
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Qualification Codes]
+      operationId: listQualificationCodes
+      summary: List qualification codes.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: Qualification codes in the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/QualificationCode" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Qualification Codes]
+      operationId: createQualificationCode
+      summary: Create a qualification code.
+      security:
+        - bearerAuth: [qualification_codes:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QualificationCodeCreate" }
+      responses:
+        "200":
+          description: The created qualification code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QualificationCode" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/qualification-codes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/TenantOverride"
+    get:
+      tags: [Qualification Codes]
+      operationId: getQualificationCode
+      summary: Fetch a qualification code.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: The qualification code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QualificationCode" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Qualification Codes]
+      operationId: updateQualificationCode
+      summary: Update a qualification code.
+      security:
+        - bearerAuth: [qualification_codes:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QualificationCodeUpdate" }
+      responses:
+        "200":
+          description: The updated qualification code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QualificationCode" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+    delete:
+      tags: [Qualification Codes]
+      operationId: deleteQualificationCode
+      summary: Delete a qualification code.
+      description: Fails if it has children.
+      security:
+        - bearerAuth: [qualification_codes:write]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/agent/session:
+    post:
+      tags: [Agent]
+      operationId: startAgentSession
+      summary: Idempotent sign-in.
+      description: Requires a user identity in the token.
+      security:
+        - bearerAuth: [agent:session:self]
+      responses:
+        "200":
+          description: The live session state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentSession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      tags: [Agent]
+      operationId: getAgentSession
+      summary: Fetch the live session state.
+      security:
+        - bearerAuth: [agent:session:self]
+      responses:
+        "200":
+          description: The live session state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentSession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Agent]
+      operationId: stopAgentSession
+      summary: Idempotent sign-out.
+      security:
+        - bearerAuth: [agent:session:self]
+      parameters:
+        - name: force
+          in: query
+          required: false
+          description: "`true` requeues engaged work and finalizes ACW (mandatory codes still enforced)."
+          schema:
+            type: string
+            enum: ["true"]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/agent/media/{media_type}/state:
+    parameters:
+      - name: media_type
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/MediaType" }
+    put:
+      tags: [Agent]
+      operationId: setMediaReady
+      summary: Set readiness for one media channel.
+      security:
+        - bearerAuth: [agent:ready:self]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReadyState" }
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/agent/offers:
+    get:
+      tags: [Agent]
+      operationId: listOffers
+      summary: List pending offers.
+      security:
+        - bearerAuth: [agent:offers:self]
+      responses:
+        "200":
+          description: Pending offers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Offer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/agent/offers/{offer_id}:
+    parameters:
+      - name: offer_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Agent]
+      operationId: getOffer
+      summary: Fetch a pending offer.
+      security:
+        - bearerAuth: [agent:offers:self]
+      responses:
+        "200":
+          description: The offer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Offer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/agent/offers/{offer_id}/accept:
+    parameters:
+      - name: offer_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Agent]
+      operationId: acceptOffer
+      summary: Accept an offer (idempotent).
+      security:
+        - bearerAuth: [agent:offers:self]
+      responses:
+        "200":
+          description: The interaction now owned by the agent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  interaction_id: { type: string }
+                required: [interaction_id]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/agent/offers/{offer_id}/reject:
+    parameters:
+      - name: offer_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Agent]
+      operationId: rejectOffer
+      summary: Reject an offer.
+      security:
+        - bearerAuth: [agent:offers:self]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/agent/interactions:
+    get:
+      tags: [Agent]
+      operationId: listMyInteractions
+      summary: List the agent's owned interactions.
+      security:
+        - bearerAuth: [agent:interactions:self]
+      responses:
+        "200":
+          description: Owned interactions, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Interaction" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/agent/interactions/{interaction_id}:
+    parameters:
+      - $ref: "#/components/parameters/InteractionId"
+    get:
+      tags: [Agent]
+      operationId: getMyInteraction
+      summary: Fetch one owned interaction.
+      security:
+        - bearerAuth: [agent:interactions:self]
+      responses:
+        "200":
+          description: The interaction.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Interaction" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/agent/interactions/{interaction_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/InteractionId"
+    post:
+      tags: [Agent]
+      operationId: completeInteraction
+      summary: Complete an interaction.
+      description: Enters after-call work (200 + wrap-up window) or finalizes directly (204).
+      security:
+        - bearerAuth: [agent:interactions:self]
+      responses:
+        "200":
+          description: Entered after-call work.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WrapupState" }
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/agent/interactions/{interaction_id}/hold:
+    parameters:
+      - $ref: "#/components/parameters/InteractionId"
+    post:
+      tags: [Agent]
+      operationId: holdInteraction
+      summary: Place an active interaction on hold.
+      security:
+        - bearerAuth: [agent:interactions:self]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/agent/interactions/{interaction_id}/resume:
+    parameters:
+      - $ref: "#/components/parameters/InteractionId"
+    post:
+      tags: [Agent]
+      operationId: resumeInteraction
+      summary: Resume a held interaction.
+      security:
+        - bearerAuth: [agent:interactions:self]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/agent/interactions/{interaction_id}/qualifications:
+    parameters:
+      - $ref: "#/components/parameters/InteractionId"
+    put:
+      tags: [Agent]
+      operationId: qualifyInteraction
+      summary: Replace an interaction's qualification codes.
+      security:
+        - bearerAuth: [agent:interactions:self]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                qualification_ids:
+                  type: array
+                  items: { type: string }
+                  description: Active code ids in the tenant tree; empty clears.
+              required: [qualification_ids]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/agent/interactions/{interaction_id}/wrapup/extend:
+    parameters:
+      - $ref: "#/components/parameters/InteractionId"
+    post:
+      tags: [Agent]
+      operationId: extendWrapup
+      summary: Extend the after-call wrap-up window.
+      security:
+        - bearerAuth: [agent:wrapup:self]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                extend_ms:
+                  type: integer
+                  minimum: 1
+              required: [extend_ms]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/agent/interactions/{interaction_id}/wrapup/finalize:
+    parameters:
+      - $ref: "#/components/parameters/InteractionId"
+    post:
+      tags: [Agent]
+      operationId: finalizeWrapup
+      summary: Finalize after-call work.
+      description: Mandatory codes enforced.
+      security:
+        - bearerAuth: [agent:wrapup:self]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/interactions:
+    post:
+      tags: [Interactions]
+      operationId: createInteraction
+      summary: Enqueue an interaction.
+      security:
+        - bearerAuth: [interactions:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InteractionCreate" }
+      responses:
+        "200":
+          description: The created interaction id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                required: [id]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Validation" }
+    get:
+      tags: [Interactions]
+      operationId: listInteractions
+      summary: List interactions (cursor-paginated).
+      security:
+        - bearerAuth: [interactions:read]
+      parameters:
+        - name: queue_id
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { $ref: "#/components/schemas/InteractionState" }
+        - name: media_type
+          in: query
+          schema: { $ref: "#/components/schemas/MediaType" }
+        - name: agent_id
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: 1..200, default 50.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: after
+          in: query
+          description: Cursor — an interaction id from a prior page's `next`.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of interactions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Interaction" }
+                  next:
+                    type: [string, "null"]
+                    description: Cursor for the next page, or null when exhausted.
+                required: [items, next]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/interactions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Interactions]
+      operationId: getInteraction
+      summary: Fetch an interaction.
+      security:
+        - bearerAuth: [interactions:read]
+      responses:
+        "200":
+          description: The interaction.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Interaction" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/interactions/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      tags: [Interactions]
+      operationId: cancelInteraction
+      summary: Cancel a queued interaction.
+      security:
+        - bearerAuth: [interactions:cancel]
+      responses:
+        "204": { $ref: "#/components/responses/NoContent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/presence:
+    get:
+      tags: [Presence]
+      operationId: getOwnPresence
+      summary: Fetch your own presence.
+      description: Requires a user identity (no named permission).
+      responses:
+        "200":
+          description: Your presence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OwnPresence" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      tags: [Presence]
+      operationId: setOwnPresence
+      summary: Declare your presence.
+      security:
+        - bearerAuth: [presence:set:self]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PresenceUpdate" }
+      responses:
+        "200":
+          description: Your updated presence.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OwnPresence" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+
+  /api/v1/presence/directory:
+    get:
+      tags: [Presence]
+      operationId: presenceDirectory
+      summary: Presence of every active tenant member.
+      description: Any authenticated tenant member.
+      responses:
+        "200":
+          description: Directory entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DirectoryEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        OIDC access token validated against the configured JWKS. The token's
+        subject resolves to an active user in the tenant; permissions come from
+        the user's roles. An operation's security value names the permission
+        that user's roles must include (enforced server-side, not carried in
+        the token); an empty list means any authenticated caller.
+
+  parameters:
+    TenantId:
+      name: tenant_id
+      in: path
+      required: true
+      schema: { type: string }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    InteractionId:
+      name: interaction_id
+      in: path
+      required: true
+      schema: { type: string }
+    TenantOverride:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      description: >-
+        Platform admins (holding `tenants:admin`) target another tenant by its
+        id. Omit to act on your own tenant (from the token). A non-admin naming
+        a tenant other than their own gets 403.
+      schema: { type: string }
+
+  responses:
+    NoContent:
+      description: Success, no body.
+    Unauthorized:
+      description: Missing or invalid Bearer token.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Authenticated but not permitted.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: Resource does not exist (or is not visible to you).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: The request conflicts with current state.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Validation:
+      description: The request body or parameters failed validation.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details.
+      properties:
+        type:
+          type: string
+          description: Stable error identifier, e.g. `urn:cx:error:in_use`.
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        errors:
+          type: array
+          description: Present for validation failures.
+          items:
+            type: object
+            properties:
+              field: { type: string }
+            required: [field]
+      required: [type, title, status]
+
+    MediaType:
+      type: string
+      enum: [voice, chat, sms, email, open_media, social_media]
+
+    PresenceState:
+      type: string
+      enum: [online, away, busy, dnd, offline, out_of_office]
+
+    InteractionState:
+      type: string
+      enum: [queued, offered, active, held, wrapup, completed, cancelled]
+
+    Timestamp:
+      type: integer
+      description: Milliseconds since the Unix epoch.
+
+    Tenant:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+      required: [id, name, status, created_at, updated_at]
+    TenantCreate:
+      type: object
+      properties:
+        name: { type: string }
+        id:
+          type: string
+          description: Optional IdP org id; generated when omitted.
+      required: [name]
+    TenantUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        status: { type: string, enum: [active, suspended] }
+
+    UserSkill:
+      type: object
+      properties:
+        skill_id: { type: string }
+        rank: { type: integer, minimum: 1 }
+      required: [skill_id, rank]
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        subject: { type: [string, "null"] }
+        name: { type: string }
+        email: { type: string }
+        role_ids:
+          type: array
+          items: { type: string }
+        skills:
+          type: array
+          items: { $ref: "#/components/schemas/UserSkill" }
+        routing_profile_id: { type: [string, "null"] }
+        status: { type: string, enum: [active, disabled] }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+      required:
+        [id, name, email, role_ids, skills, status, created_at, updated_at]
+    UserCreate:
+      type: object
+      properties:
+        name: { type: string }
+        email: { type: string }
+        subject: { type: string }
+        role_ids:
+          type: array
+          items: { type: string }
+        skills:
+          type: array
+          items: { $ref: "#/components/schemas/UserSkill" }
+        routing_profile_id: { type: string }
+      required: [name, email]
+    UserUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        email: { type: string }
+        subject: { type: string }
+        role_ids:
+          type: array
+          items: { type: string }
+        skills:
+          type: array
+          items: { $ref: "#/components/schemas/UserSkill" }
+        routing_profile_id: { type: string }
+        status: { type: string, enum: [active, disabled] }
+
+    Role:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        permissions:
+          type: array
+          items: { type: string }
+      required: [id, name, permissions]
+    RoleCreate:
+      type: object
+      properties:
+        name: { type: string }
+        permissions:
+          type: array
+          description: Tenant-assignable permission strings only.
+          items: { type: string }
+      required: [name]
+    RoleUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        permissions:
+          type: array
+          items: { type: string }
+
+    SkillLevel:
+      type: object
+      properties:
+        rank: { type: integer, minimum: 1 }
+        name: { type: string }
+      required: [rank, name]
+    Skill:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        levels:
+          type: array
+          items: { $ref: "#/components/schemas/SkillLevel" }
+      required: [id, name, levels]
+    SkillCreate:
+      type: object
+      properties:
+        name: { type: string }
+        levels:
+          type: array
+          items: { $ref: "#/components/schemas/SkillLevel" }
+      required: [name]
+    SkillUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        levels:
+          type: array
+          items: { $ref: "#/components/schemas/SkillLevel" }
+
+    Widening:
+      type: object
+      properties:
+        after_ms: { type: integer, minimum: 1 }
+        min_rank: { type: integer, minimum: 1 }
+      required: [after_ms, min_rank]
+    SkillRequirement:
+      type: object
+      properties:
+        skill_id: { type: string }
+        min_rank: { type: integer, minimum: 1 }
+        widening:
+          type: array
+          items: { $ref: "#/components/schemas/Widening" }
+      required: [skill_id, min_rank, widening]
+    Queue:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        skill_requirements:
+          type: array
+          items: { $ref: "#/components/schemas/SkillRequirement" }
+        wrapup_duration_ms: { type: integer, minimum: 0 }
+        wrapup_max_ms:
+          type: integer
+          description: 0 means uncapped.
+        offer_timeout_ms:
+          type: integer
+          description: 0 means ring forever.
+        qualification_required: { type: boolean }
+        status: { type: string, enum: [open, closed] }
+      required:
+        - id
+        - name
+        - skill_requirements
+        - wrapup_duration_ms
+        - wrapup_max_ms
+        - offer_timeout_ms
+        - qualification_required
+        - status
+    QueueCreate:
+      type: object
+      properties:
+        name: { type: string }
+        skill_requirements:
+          type: array
+          items: { $ref: "#/components/schemas/SkillRequirement" }
+        wrapup_duration_ms: { type: integer, minimum: 0, default: 30000 }
+        wrapup_max_ms:
+          type: integer
+          description: 0 = uncapped (the default).
+        offer_timeout_ms:
+          type: integer
+          description: 0 = ring forever. Default 6000.
+        qualification_required: { type: boolean, default: false }
+        status: { type: string, enum: [open, closed], default: open }
+      required: [name]
+    QueueUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        skill_requirements:
+          type: array
+          items: { $ref: "#/components/schemas/SkillRequirement" }
+        wrapup_duration_ms: { type: integer, minimum: 0 }
+        wrapup_max_ms: { type: integer }
+        offer_timeout_ms: { type: integer }
+        qualification_required: { type: boolean }
+        status: { type: string, enum: [open, closed] }
+
+    Guard:
+      type: object
+      properties:
+        when_media: { $ref: "#/components/schemas/MediaType" }
+        at_least: { type: integer, minimum: 1 }
+        block:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/MediaType" }
+      required: [when_media, at_least, block]
+    RoutingProfile:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        max_total:
+          type: [integer, "null"]
+          description: null means unlimited.
+        media_capacities:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        guards:
+          type: array
+          items: { $ref: "#/components/schemas/Guard" }
+      required: [id, name, max_total, media_capacities, guards]
+    RoutingProfileCreate:
+      type: object
+      properties:
+        name: { type: string }
+        max_total:
+          type: [integer, "null"]
+          minimum: 1
+        media_capacities:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        guards:
+          type: array
+          items: { $ref: "#/components/schemas/Guard" }
+      required: [name]
+    RoutingProfileUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        max_total:
+          type: [integer, "null"]
+          minimum: 1
+        media_capacities:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        guards:
+          type: array
+          items: { $ref: "#/components/schemas/Guard" }
+
+    NotReadyReason:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        active: { type: boolean }
+      required: [id, name, active]
+    NotReadyReasonCreate:
+      type: object
+      properties:
+        name: { type: string }
+      required: [name]
+    NotReadyReasonUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        active: { type: boolean }
+
+    QualificationCode:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        parent_id: { type: [string, "null"] }
+        active: { type: boolean }
+      required: [id, name, parent_id, active]
+    QualificationCodeCreate:
+      type: object
+      properties:
+        name: { type: string }
+        parent_id:
+          type: [string, "null"]
+          description: null (or absent) is a root code.
+      required: [name]
+    QualificationCodeUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        parent_id: { type: [string, "null"] }
+        active: { type: boolean }
+
+    ReadyState:
+      type: object
+      description: Readiness for one media channel.
+      properties:
+        state: { type: string, enum: [ready, not_ready] }
+        reason_id:
+          type: [string, "null"]
+          description: Required for `not_ready`; must be null/absent for `ready`.
+      required: [state]
+    AgentSession:
+      type: object
+      properties:
+        agent_id: { type: string }
+        ready:
+          type: object
+          description: Per-media readiness, keyed by media type.
+          additionalProperties: { $ref: "#/components/schemas/ReadyState" }
+        active:
+          type: array
+          items: { type: string }
+        held:
+          type: array
+          items: { type: string }
+        wrapup:
+          type: array
+          items: { type: string }
+        pending_offers:
+          type: array
+          items: { $ref: "#/components/schemas/Offer" }
+      required: [agent_id, ready, active, held, wrapup, pending_offers]
+
+    Offer:
+      type: object
+      properties:
+        offer_id: { type: string }
+        interaction_id: { type: string }
+        media_type: { $ref: "#/components/schemas/MediaType" }
+        queue_id: { type: string }
+        expires_at:
+          type: [integer, "null"]
+          description: Epoch ms, or null to ring forever.
+      required: [offer_id, interaction_id, media_type, queue_id, expires_at]
+
+    Interaction:
+      type: object
+      properties:
+        id: { type: string }
+        queue_id: { type: string }
+        media_type: { $ref: "#/components/schemas/MediaType" }
+        properties:
+          type: object
+          additionalProperties: { type: string }
+        state: { $ref: "#/components/schemas/InteractionState" }
+        agent_id: { type: [string, "null"] }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        enqueued_at: { $ref: "#/components/schemas/Timestamp" }
+        accepted_at: { type: [integer, "null"] }
+        wrapup_started_at: { type: [integer, "null"] }
+        wrapup_until: { type: [integer, "null"] }
+        qualification_ids:
+          type: array
+          items: { type: string }
+        completed_at: { type: [integer, "null"] }
+      required:
+        - id
+        - queue_id
+        - media_type
+        - properties
+        - state
+        - agent_id
+        - created_at
+        - enqueued_at
+        - qualification_ids
+    InteractionCreate:
+      type: object
+      properties:
+        queue_id: { type: string }
+        media_type: { $ref: "#/components/schemas/MediaType" }
+        properties:
+          type: object
+          additionalProperties: { type: string }
+      required: [queue_id, media_type]
+
+    WrapupState:
+      type: object
+      properties:
+        state: { type: string, const: wrapup }
+        wrapup_until: { $ref: "#/components/schemas/Timestamp" }
+      required: [state, wrapup_until]
+
+    OwnPresence:
+      type: object
+      properties:
+        state: { $ref: "#/components/schemas/PresenceState" }
+        manual_state:
+          oneOf:
+            - { $ref: "#/components/schemas/PresenceState" }
+            - { type: "null" }
+        message: { type: [string, "null"] }
+        until: { type: [integer, "null"] }
+        device_count: { type: integer, minimum: 0 }
+        updated_at: { type: [integer, "null"] }
+      required: [state, manual_state, message, until, device_count, updated_at]
+    PresenceUpdate:
+      type: object
+      properties:
+        state:
+          description: A declared state, or `automatic`/null to clear to automatic.
+          oneOf:
+            - { $ref: "#/components/schemas/PresenceState" }
+            - { type: string, const: automatic }
+            - { type: "null" }
+        message: { type: string }
+        until:
+          type: integer
+          description: Epoch ms in the future; requires `state` or `message`.
+    DirectoryEntry:
+      type: object
+      properties:
+        user_id: { type: string }
+        name: { type: string }
+        state: { $ref: "#/components/schemas/PresenceState" }
+        message: { type: [string, "null"] }
+        until: { type: [integer, "null"] }
+      required: [user_id, name, state, message, until]

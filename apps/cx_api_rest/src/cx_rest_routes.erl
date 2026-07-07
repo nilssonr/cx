@@ -10,13 +10,33 @@
 %%           qualifications, presence).
 %%   GET     snapshot reads wherever a client might rehydrate.
 
--export([dispatch/0]).
+-export([dispatch/0, routes/0]).
 
 dispatch() ->
-    cowboy_router:compile([{'_', routes()}]).
+    cowboy_router:compile([{'_', docs_routes() ++ routes()}]).
 
-%% Order matters: cowboy takes the first match, so sub-resources go
-%% before "/api/v1/tenants[/:tenant_id]".
+%% API reference: the OpenAPI document plus a static Scalar UI. Omitted
+%% entirely when expose_openapi is false — the spec reveals the endpoint and
+%% permission topology, so closed deployments drop it (absent route -> 404).
+%% These are auth-exempt (see cx_rest_auth_middleware); the API calls the UI
+%% fires still carry a Bearer token and traverse auth normally.
+docs_routes() ->
+    case cx_config:get(cx_api_rest, expose_openapi, true) of
+        true ->
+            [
+                {"/api/v1/openapi.yaml", cowboy_static,
+                    {priv_file, cx_api_rest, "openapi.yaml", [
+                        {mimetypes, {<<"application">>, <<"yaml">>, []}}
+                    ]}},
+                {"/api/v1/docs", cowboy_static, {priv_file, cx_api_rest, "docs/index.html"}},
+                {"/api/v1/docs/[...]", cowboy_static, {priv_dir, cx_api_rest, "docs"}}
+            ];
+        _ ->
+            []
+    end.
+
+%% Order matters: cowboy takes the first match, so more specific paths
+%% (e.g. "/users/:id/agent-session") go before "/users[/:id]".
 routes() ->
     [
         {"/healthz", cx_handler_health, #{}},
@@ -28,21 +48,19 @@ routes() ->
         {"/api/v1/presence/directory", cx_handler_presence_directory, #{}},
         {"/api/v1/presence", cx_handler_presence, #{}},
 
-        %% admin CRUD — one generic handler, parameterized by entity module
-        {"/api/v1/tenants/:tenant_id/users/:id/agent-session", cx_handler_agent_admin, #{}},
-        {"/api/v1/tenants/:tenant_id/users[/:id]", cx_handler_crud, #{module => cx_user}},
-        {"/api/v1/tenants/:tenant_id/roles[/:id]", cx_handler_crud, #{module => cx_role}},
-        {"/api/v1/tenants/:tenant_id/skills[/:id]", cx_handler_crud, #{module => cx_skill}},
-        {"/api/v1/tenants/:tenant_id/queues[/:id]", cx_handler_crud, #{module => cx_queue}},
-        {"/api/v1/tenants/:tenant_id/routing-profiles[/:id]", cx_handler_crud, #{
-            module => cx_routing_profile
-        }},
-        {"/api/v1/tenants/:tenant_id/not-ready-reasons[/:id]", cx_handler_crud, #{
-            module => cx_not_ready_reason
-        }},
-        {"/api/v1/tenants/:tenant_id/qualification-codes[/:id]", cx_handler_crud, #{
-            module => cx_qualification_code
-        }},
+        %% admin CRUD — one generic handler per entity. Tenant comes from the
+        %% token; a platform admin (tenants:admin) targets another tenant via
+        %% the X-Tenant-Id header (see cx_handler:scope_tenant_header/2).
+        {"/api/v1/users/:id/agent-session", cx_handler_agent_admin, #{}},
+        {"/api/v1/users[/:id]", cx_handler_crud, #{module => cx_user}},
+        {"/api/v1/roles[/:id]", cx_handler_crud, #{module => cx_role}},
+        {"/api/v1/skills[/:id]", cx_handler_crud, #{module => cx_skill}},
+        {"/api/v1/queues[/:id]", cx_handler_crud, #{module => cx_queue}},
+        {"/api/v1/routing-profiles[/:id]", cx_handler_crud, #{module => cx_routing_profile}},
+        {"/api/v1/not-ready-reasons[/:id]", cx_handler_crud, #{module => cx_not_ready_reason}},
+        {"/api/v1/qualification-codes[/:id]", cx_handler_crud, #{module => cx_qualification_code}},
+
+        %% platform tenant administration — :tenant_id here is the resource id
         {"/api/v1/tenants[/:tenant_id]", cx_handler_tenants, #{}},
 
         %% agent operations — identity comes from the token, never the path
