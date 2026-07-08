@@ -3,20 +3,15 @@
 %% Generic admin CRUD handler: every tenant-scoped entity module exposes
 %% the same create/get/list/update/delete(Context, ...) shape, so one handler
 %% serves them all, parameterized with #{module => cx_queue} from the
-%% route table. Tenant comes from the token (or the X-Tenant-Id header for
-%% cross-tenant platform admins); the :id binding selects the resource.
+%% route table. Tenant comes from the token (a platform admin targeting another
+%% tenant carries a signed act_as_tenant claim, honored at authentication);
+%% the :id binding selects the resource.
 
 -export([init/2]).
 
-init(Req0, Opts = #{context := Context0, module := Mod}) ->
-    {Result, Req1} =
-        case cx_handler:scope_tenant_header(Context0, Req0) of
-            {ok, Context} ->
-                Id = cowboy_req:binding(id, Req0),
-                dispatch(cowboy_req:method(Req0), Id, Mod, Context, Req0);
-            {error, forbidden} ->
-                {{error, forbidden}, Req0}
-        end,
+init(Req0, Opts = #{context := Context, module := Mod}) ->
+    Id = cowboy_req:binding(id, Req0),
+    {Result, Req1} = dispatch(cowboy_req:method(Req0), Id, Mod, Context, Req0),
     {ok, cx_handler:reply(Result, Req1), Opts}.
 
 dispatch(<<"GET">>, undefined, Mod, Context, Req) ->

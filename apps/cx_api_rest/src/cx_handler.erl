@@ -4,9 +4,7 @@
 %% domain errors map to HTTP statuses. Handlers stay thin: decode ->
 %% domain call -> reply.
 
--include_lib("cx_core/include/cx_core.hrl").
-
--export([reply/2, with_body/2, scope_tenant/2, scope_tenant_header/2, problem/1, catalog/0]).
+-export([reply/2, with_body/2, problem/1, catalog/0]).
 
 -define(JSON, #{<<"content-type">> => <<"application/json">>}).
 -define(PROBLEM_JSON, #{<<"content-type">> => <<"application/problem+json">>}).
@@ -103,28 +101,4 @@ with_body(Req0, Fun) ->
     case cx_json:decode(Body) of
         {ok, Map} when is_map(Map) -> {Fun(Map), Req1};
         _ -> {{error, {invalid, json}}, Req1}
-    end.
-
-%% Admin routes act on the caller's own tenant (from the token) by default.
-%% A platform admin targets a different tenant via the X-Tenant-Id header;
-%% that requires tenants:admin and rescopes the context so every downstream
-%% key is built from the header tenant. No header -> the token tenant.
--spec scope_tenant_header(#auth_context{}, cowboy_req:req()) ->
-    {ok, #auth_context{}} | {error, forbidden}.
-scope_tenant_header(Context, Req) ->
-    case cowboy_req:header(<<"x-tenant-id">>, Req) of
-        undefined -> {ok, Context};
-        TenantId -> scope_tenant(Context, TenantId)
-    end.
-
-%% Own tenant is the normal case; a different tenant requires tenants:admin
-%% and rescopes the context to it.
--spec scope_tenant(#auth_context{}, binary()) ->
-    {ok, #auth_context{}} | {error, forbidden}.
-scope_tenant(Context = #auth_context{tenant_id = TenantId}, TenantId) ->
-    {ok, Context};
-scope_tenant(Context, TenantId) ->
-    case cx_authz:has(Context, <<"tenants:admin">>) of
-        true -> {ok, Context#auth_context{tenant_id = TenantId}};
-        false -> {error, forbidden}
     end.

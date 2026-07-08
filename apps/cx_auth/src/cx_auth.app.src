@@ -23,7 +23,8 @@
         {authorization_code_ttl_s, 60},
         {session_idle_ttl_s, 3600},
         {session_absolute_ttl_s, 36000},
-        {session_remember_ttl_s, 2592000}
+        {session_remember_ttl_s, 2592000},
+        {session_gc_interval_ms, 300000}
     ]},
     {modules, []},
     {licenses, []},

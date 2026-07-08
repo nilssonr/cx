@@ -242,31 +242,37 @@ admin_crud_roundtrip(Config) ->
     {404, _} = req(Config, delete, Base ++ "/not-ready-reasons/x", Admin),
     ok.
 
+%% Cross-tenant reach is a signed act_as_tenant claim, not a header. A platform
+%% admin carrying the claim acts on the named tenant; the same claim on a
+%% non-admin is ignored, so tenant isolation holds.
 cross_tenant_forbidden(Config) ->
     Boss = boss_token(Config, <<"bootstrap">>),
     {200, #{<<"id">> := T1}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"One">>}),
     {200, #{<<"id">> := T2}} =
         req(Config, post, "/api/v1/tenants", Boss, #{<<"name">> => <<"Two">>}),
+    Keypair = proplists:get_value(keypair, Config),
 
-    %% a T2-scoped user token cannot reach T1 by naming it in X-Tenant-Id
-    AdminT2 = user_token(Config, T2, <<"t2-admin">>, [
-        <<"queues:read">>,
-        <<"queues:write">>
-    ]),
-    T1Header = [{"x-tenant-id", binary_to_list(T1)}],
-    {403, _} = req(Config, get, "/api/v1/queues", AdminT2, none, T1Header),
-    {403, _} = req(
-        Config,
-        post,
-        "/api/v1/queues",
-        AdminT2,
-        #{<<"name">> => <<"sneaky">>},
-        T1Header
-    ),
+    %% a platform admin acting as T1 creates a queue there and reads it back —
+    %% the claim grants cross-tenant reach
+    BossAsT1 = cx_auth_test:token(Keypair, #{
+        <<"sub">> => <<"boss">>,
+        <<"urn:zitadel:iam:org:id">> => <<"bootstrap">>,
+        <<"act_as_tenant">> => T1
+    }),
+    {200, #{<<"id">> := QueueId}} =
+        req(Config, post, "/api/v1/queues", BossAsT1, #{<<"name">> => <<"in-t1">>}),
+    {200, [#{<<"id">> := QueueId}]} = req(Config, get, "/api/v1/queues", BossAsT1),
 
-    %% a platform admin (wildcard perms) crosses tenants via the same header
-    {200, _} = req(Config, get, "/api/v1/queues", Boss, none, T1Header),
+    %% a non-admin T2 user carrying act_as_tenant=T1: the claim is ignored, so
+    %% the user stays scoped to T2 and never sees T1's queue
+    _ = user_token(Config, T2, <<"t2-admin">>, [<<"queues:read">>, <<"queues:write">>]),
+    SneakyT2 = cx_auth_test:token(Keypair, #{
+        <<"sub">> => <<"t2-admin">>,
+        <<"urn:zitadel:iam:org:id">> => T2,
+        <<"act_as_tenant">> => T1
+    }),
+    {200, []} = req(Config, get, "/api/v1/queues", SneakyT2),
     ok.
 
 agent_open_media_flow(Config) ->

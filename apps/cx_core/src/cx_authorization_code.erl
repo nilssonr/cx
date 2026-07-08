@@ -23,6 +23,7 @@ issue(Args) ->
         subject = maps:get(subject, Args),
         tenant_id = maps:get(tenant_id, Args),
         act_as_tenant = maps:get(act_as_tenant, Args, undefined),
+        session_id = maps:get(session_id, Args, undefined),
         redirect_uri = maps:get(redirect_uri, Args),
         code_challenge = maps:get(code_challenge, Args),
         code_challenge_method = maps:get(code_challenge_method, Args),

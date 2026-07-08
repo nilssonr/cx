@@ -28,6 +28,9 @@ execute(Req, Env = #{handler := cx_handler_oidc_metadata}) ->
 %% The token endpoint authenticates its own client (Basic / client_secret_post).
 execute(Req, Env = #{handler := cx_handler_token}) ->
     {ok, Req, Env};
+%% The authorize endpoint IS the login — it establishes auth, so no token yet.
+execute(Req, Env = #{handler := cx_handler_authorize}) ->
+    {ok, Req, Env};
 execute(Req, Env = #{handler_opts := Opts}) ->
     Authorization = cowboy_req:header(<<"authorization">>, Req, <<>>),
     case cx_auth:authenticate(Authorization) of
