@@ -8,7 +8,7 @@
 
 -include("cx_core.hrl").
 
--export([issue/1, redeem/1, rotate/2, revoke_family/1]).
+-export([issue/1, redeem/1, rotate/2, revoke_family/1, find/1, revoke/1, revoke_by_session/1]).
 
 -define(DEFAULT_TTL_S, 2592000).
 -define(DEFAULT_IDLE_TTL_S, 1209600).
@@ -54,6 +54,32 @@ revoke_family(#cx_refresh_token{subject = Subject, client_id = ClientId}) ->
     Rows = cx_store:dirty_index_read(cx_refresh_token, Subject, #cx_refresh_token.subject),
     revoke([R || R = #cx_refresh_token{client_id = C} <- Rows, C =:= ClientId]).
 
+%% Look up the stored row for a handle WITHOUT redeem/1's liveness check.
+%% Callers that must act on already-revoked/rotated/expired rows — RFC 7009
+%% revocation (idempotent) and RFC 7662 introspection — need the raw row.
+-spec find(binary()) -> {ok, #cx_refresh_token{}} | {error, not_found}.
+find(Handle) ->
+    case cx_store:read(cx_refresh_token, token_id(Handle)) of
+        {ok, #cx_refresh_token{} = Rec} -> {ok, Rec};
+        {error, not_found} -> {error, not_found}
+    end.
+
+%% Revoke one row or a list of rows. Idempotent — re-marking an already-revoked
+%% row is a no-op write, so revoking a dead token still succeeds (RFC 7009).
+-spec revoke(#cx_refresh_token{} | [#cx_refresh_token{}]) -> ok.
+revoke(#cx_refresh_token{} = Rec) ->
+    revoke([Rec]);
+revoke(Rows) when is_list(Rows) ->
+    ok = cx_store:tx(fun() ->
+        lists:foreach(fun(R) -> mnesia:write(R#cx_refresh_token{revoked = true}) end, Rows)
+    end),
+    ok.
+
+%% Revoke every refresh token minted under a provider session (logout / kill).
+-spec revoke_by_session(binary()) -> ok.
+revoke_by_session(SessionId) ->
+    revoke(cx_store:dirty_index_read(cx_refresh_token, SessionId, #cx_refresh_token.session_id)).
+
 %% ---- internals ----
 
 mint(Args) ->
@@ -96,12 +122,6 @@ classify(Rec) ->
 
 idle_expired(#cx_refresh_token{idle_expires_at = undefined}, _Now) -> false;
 idle_expired(#cx_refresh_token{idle_expires_at = Idle}, Now) -> Now >= Idle.
-
-revoke(Rows) ->
-    ok = cx_store:tx(fun() ->
-        lists:foreach(fun(R) -> mnesia:write(R#cx_refresh_token{revoked = true}) end, Rows)
-    end),
-    ok.
 
 new_handle() ->
     base64:encode(crypto:strong_rand_bytes(32), #{mode => urlsafe, padding => false}).
