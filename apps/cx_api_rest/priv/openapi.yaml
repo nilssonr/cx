@@ -11,8 +11,9 @@ info:
     URN and field-validation failures carry an `errors` array.
 
     The caller's tenant comes from the token. Admin endpoints act on that
-    tenant by default; a platform admin (holding `tenants:admin`) targets a
-    different tenant with the `X-Tenant-Id` header.
+    tenant; a platform admin targets a different tenant by carrying a signed
+    `act_as_tenant` claim in the token (minted at `/authorize` when the admin
+    selects a tenant), honored only for platform-admin subjects.
 
     Each operation's required permission is its security requirement: the value
     listed under `bearerAuth` is the permission (a role name) the caller's roles
@@ -168,8 +169,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/users:
-    parameters:
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Users]
       operationId: listUsers
@@ -210,7 +209,6 @@ paths:
   /api/v1/users/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Users]
       operationId: getUser
@@ -262,7 +260,6 @@ paths:
   /api/v1/users/{id}/agent-session:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     delete:
       tags: [Agent]
       operationId: forceStopAgentSession
@@ -279,8 +276,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/roles:
-    parameters:
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Roles]
       operationId: listRoles
@@ -319,7 +314,6 @@ paths:
   /api/v1/roles/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Roles]
       operationId: getRole
@@ -369,8 +363,6 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/skills:
-    parameters:
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Skills]
       operationId: listSkills
@@ -409,7 +401,6 @@ paths:
   /api/v1/skills/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Skills]
       operationId: getSkill
@@ -459,8 +450,6 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/queues:
-    parameters:
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Queues]
       operationId: listQueues
@@ -501,7 +490,6 @@ paths:
   /api/v1/queues/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Queues]
       operationId: getQueue
@@ -551,8 +539,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/routing-profiles:
-    parameters:
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Routing Profiles]
       operationId: listRoutingProfiles
@@ -591,7 +577,6 @@ paths:
   /api/v1/routing-profiles/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Routing Profiles]
       operationId: getRoutingProfile
@@ -641,8 +626,6 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/not-ready-reasons:
-    parameters:
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Not-Ready Reasons]
       operationId: listNotReadyReasons
@@ -681,7 +664,6 @@ paths:
   /api/v1/not-ready-reasons/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Not-Ready Reasons]
       operationId: getNotReadyReason
@@ -729,8 +711,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/qualification-codes:
-    parameters:
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Qualification Codes]
       operationId: listQualificationCodes
@@ -769,7 +749,6 @@ paths:
   /api/v1/qualification-codes/{id}:
     parameters:
       - $ref: "#/components/parameters/Id"
-      - $ref: "#/components/parameters/TenantOverride"
     get:
       tags: [Qualification Codes]
       operationId: getQualificationCode
@@ -1334,15 +1313,6 @@ components:
       name: interaction_id
       in: path
       required: true
-      schema: { type: string }
-    TenantOverride:
-      name: X-Tenant-Id
-      in: header
-      required: false
-      description: >-
-        Platform admins (holding `tenants:admin`) target another tenant by its
-        id. Omit to act on your own tenant (from the token). A non-admin naming
-        a tenant other than their own gets 403.
       schema: { type: string }
 
   responses:

@@ -58,8 +58,8 @@ routes() ->
         {"/api/v1/presence", cx_handler_presence, #{}},
 
         %% admin CRUD — one generic handler per entity. Tenant comes from the
-        %% token; a platform admin (tenants:admin) targets another tenant via
-        %% the X-Tenant-Id header (see cx_handler:scope_tenant_header/2).
+        %% token; a platform admin targets another tenant by carrying a signed
+        %% act_as_tenant claim (honored at authentication in cx_auth_claims).
         {"/api/v1/users/:id/agent-session", cx_handler_agent_admin, #{}},
         {"/api/v1/users[/:id]", cx_handler_crud, #{module => cx_user}},
         {"/api/v1/roles[/:id]", cx_handler_crud, #{module => cx_role}},
