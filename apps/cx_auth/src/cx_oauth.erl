@@ -84,7 +84,11 @@ authorization_code_response(Auth, #cx_oauth_client{client_id = ClientId}) ->
         act_as_tenant => Auth#cx_authorization_code.act_as_tenant
     }),
     {Refresh, _} = cx_refresh_token:issue(#{
-        subject => Subject, tenant_id => TenantId, client_id => ClientId, scope => Scope
+        subject => Subject,
+        tenant_id => TenantId,
+        client_id => ClientId,
+        scope => Scope,
+        session_id => Auth#cx_authorization_code.session_id
     }),
     Base = (response(Access, Scope))#{<<"refresh_token">> => Refresh},
     with_id_token(Base, Scope, Subject, ClientId, Auth#cx_authorization_code.nonce).

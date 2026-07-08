@@ -45,6 +45,8 @@ routes() ->
         {"/.well-known/openid-configuration", cx_handler_oidc_metadata, #{}},
         {"/.well-known/jwks.json", cx_handler_jwks, #{}},
 
+        %% OAuth authorization endpoint — hosted login + tenant picker (HTML)
+        {"/authorize", cx_handler_authorize, #{}},
         %% OAuth token endpoint — form-encoded, authenticates its own client
         {"/token", cx_handler_token, #{}},
 

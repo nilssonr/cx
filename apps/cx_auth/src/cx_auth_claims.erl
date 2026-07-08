@@ -33,7 +33,7 @@ resolve(TenantId, Subject, Claims) ->
     case lists:member(Subject, PlatformAdmins) of
         true ->
             {ok, #auth_context{
-                tenant_id = TenantId,
+                tenant_id = act_as(TenantId, Claims),
                 user_id = undefined,
                 subject = Subject,
                 permissions = sets:from_list([<<"*">>]),
@@ -41,6 +41,15 @@ resolve(TenantId, Subject, Claims) ->
             }};
         false ->
             resolve_user(TenantId, Subject, Claims)
+    end.
+
+%% A platform admin's token may carry an act_as_tenant claim (minted at
+%% /authorize when the admin selects a tenant); it rescopes the effective
+%% tenant. Honored ONLY on the platform-admin branch.
+act_as(TenantId, Claims) ->
+    case maps:get(<<"act_as_tenant">>, Claims, undefined) of
+        Tenant when is_binary(Tenant) -> Tenant;
+        _ -> TenantId
     end.
 
 resolve_user(TenantId, Subject, Claims) ->

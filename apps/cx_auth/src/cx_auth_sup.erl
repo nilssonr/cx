@@ -18,7 +18,10 @@ init([]) ->
             {ok, {jwks, _Url}} ->
                 [#{id => cx_jwks_cache, start => {cx_jwks_cache, start_link, []}}];
             {ok, local} ->
-                [#{id => cx_signing_keys, start => {cx_signing_keys, start_link, []}}];
+                [
+                    #{id => cx_signing_keys, start => {cx_signing_keys, start_link, []}},
+                    #{id => cx_session_gc, start => {cx_session_gc, start_link, []}}
+                ];
             _ ->
                 []
         end,

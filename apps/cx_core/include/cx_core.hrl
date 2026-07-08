@@ -280,6 +280,7 @@
     subject :: binary(),
     tenant_id :: binary(),
     act_as_tenant :: binary() | undefined,
+    session_id :: binary() | undefined,
     redirect_uri :: binary(),
     code_challenge :: binary(),
     code_challenge_method :: binary(),

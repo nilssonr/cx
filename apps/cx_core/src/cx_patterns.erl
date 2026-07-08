@@ -26,7 +26,8 @@
     presence_effective/1,
     identities/0,
     oauth_clients/0,
-    signing_keys/0
+    signing_keys/0,
+    provider_sessions/0
 ]).
 
 tenants() -> #cx_tenant{_ = '_'}.
@@ -66,3 +67,5 @@ identities() -> #cx_identity{_ = '_'}.
 oauth_clients() -> #cx_oauth_client{_ = '_'}.
 
 signing_keys() -> #cx_signing_key{_ = '_'}.
+
+provider_sessions() -> #cx_provider_session{_ = '_'}.
