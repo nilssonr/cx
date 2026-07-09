@@ -81,6 +81,8 @@ websocket_handle({text, Frame}, State = #socket{phase = ready}) ->
             {[{text, cx_ws_protocol:pong_frame()}], State, hibernate};
         activity ->
             {[], report_activity(State)};
+        {reauth, Token} ->
+            reauth(Token, State);
         {auth, _, _} ->
             {[{text, cx_ws_protocol:error_frame(<<"already_authenticated">>)}], State};
         {error, invalid_frame} ->
@@ -177,15 +179,9 @@ authenticate(Token, DeviceId, State) ->
             %% valid token without an agent identity (integrator
             %% credentials) — nothing to deliver, nothing to register
             {[{close, 4403, <<"no_agent_identity">>}], State};
-        {ok, Context = #auth_context{tenant_id = T, user_id = UserId, claims = Claims}} ->
+        {ok, Context = #auth_context{tenant_id = T, user_id = UserId}} ->
             cancel_auth_timer(State#socket.auth_timer_ref),
-            %% exp is required by cx_auth_jwt:validate_claims; if it is
-            %% somehow absent, fail closed as already-expired
-            ExpiryMs =
-                case maps:get(<<"exp">>, Claims, undefined) of
-                    E when is_integer(E) -> E * 1000;
-                    _ -> 0
-                end,
+            ExpiryMs = expiry_ms(Context),
             %% subscribe BEFORE ready so no event can fall in the gap;
             %% the client resyncs current state via REST on connect
             ok = cx_event:subscribe(T),
@@ -201,6 +197,36 @@ authenticate(Token, DeviceId, State) ->
             Ready = cx_ws_protocol:ready_frame(UserId, T, DeviceId),
             %% ready first; a close command (if any) follows it in order
             {[{text, Ready} | Commands], State1}
+    end.
+
+%% In-band token refresh on a live socket: re-verify and reset the expiry
+%% deadline so a socket outlives its ~10-min access token without dropping.
+%% The new token must carry the SAME subject — a swap to a different identity
+%% on an established connection is rejected. Presence + event subscription are
+%% first-connect concerns and stay untouched; the superseded session_check
+%% timer is left to the stale-timer clause, exactly as a normal reschedule.
+reauth(Token, State = #socket{auth_context = #auth_context{subject = Subject}}) ->
+    case cx_auth:authenticate(Token) of
+        {ok, Context = #auth_context{subject = Subject}} ->
+            ExpiryMs = expiry_ms(Context),
+            State1 = State#socket{
+                auth_context = Context,
+                expiry_ms = ExpiryMs,
+                session_timer_ref = schedule_session_check(ExpiryMs)
+            },
+            {[{text, cx_ws_protocol:reauth_ok_frame()}], State1};
+        {ok, _Other} ->
+            {[{close, 4401, <<"subject_mismatch">>}], State};
+        {error, unauthorized} ->
+            {[{close, 4401, <<"unauthorized">>}], State}
+    end.
+
+%% Token expiry as ms since epoch. exp is required by cx_auth_jwt:validate_claims;
+%% if it is somehow absent, fail closed as already-expired.
+expiry_ms(#auth_context{claims = Claims}) ->
+    case maps:get(<<"exp">>, Claims, undefined) of
+        E when is_integer(E) -> E * 1000;
+        _ -> 0
     end.
 
 cancel_auth_timer(undefined) ->

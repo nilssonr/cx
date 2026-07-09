@@ -4,7 +4,7 @@
 %% decoding, server-frame encoding and the event filter. No processes,
 %% no sockets — fully unit-testable.
 
--export([decode/1, event_frame/3, ready_frame/3, pong_frame/0, error_frame/1]).
+-export([decode/1, event_frame/3, ready_frame/3, reauth_ok_frame/0, pong_frame/0, error_frame/1]).
 -export([relevant/2]).
 
 %% Events an agent receives about THEMSELVES (matched on data.agent_id).
@@ -34,6 +34,7 @@
 
 -spec decode(binary()) ->
     {auth, binary(), binary() | undefined}
+    | {reauth, binary()}
     | ping
     | activity
     | {error, invalid_frame}.
@@ -48,6 +49,8 @@ decode(Frame) ->
                     _ -> undefined
                 end,
             {auth, Token, DeviceId};
+        {ok, #{<<"type">> := <<"reauth">>, <<"token">> := Token}} when is_binary(Token) ->
+            {reauth, Token};
         {ok, #{<<"type">> := <<"ping">>}} ->
             ping;
         {ok, #{<<"type">> := <<"activity">>}} ->
@@ -77,6 +80,11 @@ ready_frame(UserId, TenantId, DeviceId) ->
         <<"tenant_id">> => TenantId,
         <<"device_id">> => cx_json:undef_to_null(DeviceId)
     }).
+
+%% Acks a successful in-band re-auth on a live socket; the expiry deadline is
+%% now the new token's, no user/tenant/device echo needed (unchanged since auth).
+reauth_ok_frame() ->
+    cx_json:encode(#{<<"type">> => <<"reauth_ok">>}).
 
 pong_frame() ->
     cx_json:encode(#{<<"type">> => <<"pong">>}).

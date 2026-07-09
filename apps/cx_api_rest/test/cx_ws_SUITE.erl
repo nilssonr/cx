@@ -15,6 +15,9 @@
     offer_event_targeted/1,
     presence_fanout_and_disconnect/1,
     expired_token_closes_socket/1,
+    reauth_extends_socket/1,
+    reauth_bad_token_closes/1,
+    reauth_subject_mismatch_closes/1,
     disabled_user_closes_socket/1,
     deactivated_user_presence_close/1
 ]).
@@ -28,6 +31,9 @@ all() ->
         offer_event_targeted,
         presence_fanout_and_disconnect,
         expired_token_closes_socket,
+        reauth_extends_socket,
+        reauth_bad_token_closes,
+        reauth_subject_mismatch_closes,
         disabled_user_closes_socket,
         deactivated_user_presence_close
     ].
@@ -173,6 +179,51 @@ expired_token_closes_socket(Config) ->
         ok = application:set_env(cx_api_rest, ws_session_check_ms, 60000)
     end.
 
+%% An in-band reauth frame with a fresh token resets the expiry deadline, so
+%% the socket outlives the original near-expiry token instead of closing at it.
+reauth_extends_socket(Config) ->
+    ok = application:set_env(cx_api_rest, ws_session_check_ms, 200),
+    try
+        {T, UserId} = provision_user(<<"Reauth">>),
+        {Conn, Stream} = ws_open(Config),
+        Near = mint(Config, T, UserId, erlang:system_time(second) + 1),
+        ws_send(Conn, Stream, #{<<"type">> => <<"auth">>, <<"token">> => Near}),
+        #{<<"type">> := <<"ready">>} = ws_recv_json(Conn, Stream, 3000),
+        %% refresh with a long-lived token before the near one expires
+        Fresh = mint(Config, T, UserId, erlang:system_time(second) + 3600),
+        ws_send(Conn, Stream, #{<<"type">> => <<"reauth">>, <<"token">> => Fresh}),
+        #{<<"type">> := <<"reauth_ok">>} = ws_recv_type(Conn, Stream, <<"reauth_ok">>, 3000),
+        %% past the old exp the socket is still alive: ping -> pong
+        timer:sleep(1200),
+        ws_send(Conn, Stream, #{<<"type">> => <<"ping">>}),
+        #{<<"type">> := <<"pong">>} = ws_recv_type(Conn, Stream, <<"pong">>, 2000),
+        gun:close(Conn)
+    after
+        ok = application:set_env(cx_api_rest, ws_session_check_ms, 60000)
+    end.
+
+%% A reauth frame carrying an invalid token drops the socket (4401).
+reauth_bad_token_closes(Config) ->
+    {T, UserId} = provision_user(<<"ReauthBad">>),
+    {Conn, Stream} = ws_auth(Config, T, UserId),
+    ws_send(Conn, Stream, #{<<"type">> => <<"reauth">>, <<"token">> => <<"garbage">>}),
+    ?assertMatch({close, 4401, _}, ws_recv_close(Conn, Stream, 2000)),
+    gun:close(Conn).
+
+%% A reauth to a DIFFERENT subject (valid token, wrong identity) is rejected —
+%% no swapping identities on an established socket.
+reauth_subject_mismatch_closes(Config) ->
+    T = cx_id:new(),
+    Admin = cx_authz:context(T, [<<"*">>]),
+    UserA = create_user(Admin, <<"MisA">>),
+    UserB = create_user(Admin, <<"MisB">>),
+    {Conn, Stream} = ws_auth(Config, T, UserA),
+    ws_send(Conn, Stream, #{
+        <<"type">> => <<"reauth">>, <<"token">> => token_for(Config, T, UserB)
+    }),
+    ?assertMatch({close, 4401, <<"subject_mismatch">>}, ws_recv_close(Conn, Stream, 2000)),
+    gun:close(Conn).
+
 %% Disabling a user mid-connection revokes the live socket at the next
 %% session check.
 disabled_user_closes_socket(Config) ->
@@ -257,6 +308,15 @@ token_for(Config, T, UserId) ->
     {ok, #cx_user{subject = Sub}} = cx_user:fetch(T, UserId),
     cx_auth_test:token(Keypair, #{
         <<"sub">> => Sub, <<"urn:zitadel:iam:org:id">> => T
+    }).
+
+%% Like token_for/3 but with an explicit exp (epoch seconds) — for the reauth
+%% deadline tests.
+mint(Config, T, UserId, Exp) ->
+    Keypair = proplists:get_value(keypair, Config),
+    {ok, #cx_user{subject = Sub}} = cx_user:fetch(T, UserId),
+    cx_auth_test:token(Keypair, #{
+        <<"sub">> => Sub, <<"urn:zitadel:iam:org:id">> => T, <<"exp">> => Exp
     }).
 
 ws_open(Config) ->
