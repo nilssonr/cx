@@ -16,7 +16,18 @@ reply({ok, Data}, Req) ->
     cowboy_req:reply(200, ?JSON, cx_json:encode(Data), Req);
 reply({error, Error}, Req) ->
     {Status, Body} = problem(Error),
-    cowboy_req:reply(Status, ?PROBLEM_JSON, cx_json:encode(Body), Req).
+    Headers = maps:merge(?PROBLEM_JSON, challenge(Status)),
+    cowboy_req:reply(Status, Headers, cx_json:encode(Body), Req).
+
+%% RFC 6750 §3: a protected-resource request that fails authorization carries a
+%% Bearer challenge. These handlers run only after the middleware admitted a
+%% valid token, so a 401/403 here is authorization, not a missing/invalid token
+%% — 403 is insufficient_scope, 401 invalid_token. (The no-credentials bare
+%% challenge is the middleware's, which alone knows the header was absent.)
+-spec challenge(400..599) -> map().
+challenge(401) -> #{<<"www-authenticate">> => <<"Bearer error=\"invalid_token\"">>};
+challenge(403) -> #{<<"www-authenticate">> => <<"Bearer error=\"insufficient_scope\"">>};
+challenge(_) -> #{}.
 
 %% Every domain error atom, paired with its RFC 9457 title and HTTP status.
 %% This one list is the source of truth for problem/1 and for the set of

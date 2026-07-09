@@ -9,7 +9,7 @@
 
 -include_lib("cx_core/include/cx_core.hrl").
 
--export([token/1]).
+-export([token/1, revoke/1, introspect/1]).
 
 -export_type([error/0]).
 
@@ -171,6 +171,73 @@ client_credentials_response(#cx_oauth_client{client_id = ClientId}, TenantId, Sc
         subject => ClientId, tenant_id => TenantId, client_id => ClientId, scope => join(Scope)
     }),
     response(Access, Scope).
+
+%% ---- revoke (RFC 7009) ----
+
+%% The client authenticates and may revoke only its OWN refresh token. An
+%% unknown, expired, or foreign token is a silent success (200) — a client
+%% learns nothing about tokens that are not its own. Only the client-auth and
+%% missing-parameter failures surface as errors.
+-spec revoke(map()) -> {ok, map()} | {error, error()}.
+revoke(Params) ->
+    maybe
+        {ok, Client} ?= authenticate_client(Params),
+        {ok, Handle} ?= require(Params, <<"token">>),
+        _ = revoke_if_owned(Handle, Client),
+        {ok, #{}}
+    end.
+
+revoke_if_owned(Handle, #cx_oauth_client{client_id = ClientId}) ->
+    case cx_refresh_token:find(Handle) of
+        {ok, #cx_refresh_token{client_id = ClientId} = Token} ->
+            cx_refresh_token:revoke(Token);
+        _ ->
+            ok
+    end.
+
+%% ---- introspect (RFC 7662) ----
+
+%% The caller authenticates (this blocks token scanning), then we report
+%% whether the token is active plus its standard claims. An inactive, unknown,
+%% or malformed token returns only {"active": false}.
+-spec introspect(map()) -> {ok, map()} | {error, error()}.
+introspect(Params) ->
+    maybe
+        {ok, _Client} ?= authenticate_client(Params),
+        {ok, Token} ?= require(Params, <<"token">>),
+        {ok, introspection(Token)}
+    end.
+
+introspection(Token) ->
+    case cx_auth_jwt:verify(Token) of
+        {ok, Claims} -> access_introspection(Claims);
+        {error, unauthorized} -> refresh_introspection(Token)
+    end.
+
+%% A valid self-contained access token: echo the RFC 7662 standard fields the
+%% token carries (omitting any it lacks).
+access_introspection(Claims) ->
+    Fields = [<<"sub">>, <<"client_id">>, <<"scope">>, <<"exp">>, <<"iat">>, <<"aud">>, <<"iss">>],
+    (maps:with(Fields, Claims))#{
+        <<"active">> => true,
+        <<"token_type">> => <<"Bearer">>
+    }.
+
+%% Not an access token — try it as a refresh handle. cx_refresh_token:redeem/1
+%% is side-effect-free and reports liveness (revoked/rotated/expired => error).
+refresh_introspection(Handle) ->
+    case cx_refresh_token:redeem(Handle) of
+        {ok, Token} ->
+            #{
+                <<"active">> => true,
+                <<"sub">> => Token#cx_refresh_token.subject,
+                <<"client_id">> => Token#cx_refresh_token.client_id,
+                <<"scope">> => join(Token#cx_refresh_token.scope),
+                <<"exp">> => Token#cx_refresh_token.expires_at div 1000
+            };
+        {error, _} ->
+            #{<<"active">> => false}
+    end.
 
 %% ---- shared ----
 

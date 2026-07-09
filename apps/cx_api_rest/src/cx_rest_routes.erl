@@ -49,6 +49,13 @@ routes() ->
         {"/authorize", cx_handler_authorize, #{}},
         %% OAuth token endpoint — form-encoded, authenticates its own client
         {"/token", cx_handler_token, #{}},
+        %% OAuth revocation + introspection — form-encoded, own client auth
+        {"/revoke", cx_handler_revoke, #{}},
+        {"/introspect", cx_handler_introspect, #{}},
+        %% RP-initiated logout (end_session) — cookie-based, no bearer
+        {"/logout", cx_handler_logout, #{}},
+        %% OIDC UserInfo — bearer-protected (goes through the auth middleware)
+        {"/userinfo", cx_handler_userinfo, #{}},
 
         %% push transport — auth is in-band (first frame), see cx_handler_socket
         {"/api/v1/socket", cx_handler_socket, #{}},

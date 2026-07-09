@@ -26,6 +26,9 @@ metadata() ->
         <<"authorization_endpoint">> => join(Issuer, <<"/authorize">>),
         <<"token_endpoint">> => join(Issuer, <<"/token">>),
         <<"userinfo_endpoint">> => join(Issuer, <<"/userinfo">>),
+        <<"revocation_endpoint">> => join(Issuer, <<"/revoke">>),
+        <<"introspection_endpoint">> => join(Issuer, <<"/introspect">>),
+        <<"end_session_endpoint">> => join(Issuer, <<"/logout">>),
         <<"jwks_uri">> => join(Issuer, <<"/.well-known/jwks.json">>),
         <<"response_types_supported">> => [<<"code">>],
         <<"grant_types_supported">> => [

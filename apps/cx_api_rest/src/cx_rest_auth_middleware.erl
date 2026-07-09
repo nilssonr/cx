@@ -25,24 +25,47 @@ execute(Req, Env = #{handler := cx_handler_jwks}) ->
     {ok, Req, Env};
 execute(Req, Env = #{handler := cx_handler_oidc_metadata}) ->
     {ok, Req, Env};
-%% The token endpoint authenticates its own client (Basic / client_secret_post).
+%% The token/revoke/introspect endpoints authenticate their own client
+%% (Basic / client_secret_post), so no Bearer token is expected.
 execute(Req, Env = #{handler := cx_handler_token}) ->
+    {ok, Req, Env};
+execute(Req, Env = #{handler := cx_handler_revoke}) ->
+    {ok, Req, Env};
+execute(Req, Env = #{handler := cx_handler_introspect}) ->
     {ok, Req, Env};
 %% The authorize endpoint IS the login — it establishes auth, so no token yet.
 execute(Req, Env = #{handler := cx_handler_authorize}) ->
     {ok, Req, Env};
+%% RP-initiated logout is bound to the provider-session cookie, not a Bearer.
+execute(Req, Env = #{handler := cx_handler_logout}) ->
+    {ok, Req, Env};
 execute(Req, Env = #{handler_opts := Opts}) ->
-    Authorization = cowboy_req:header(<<"authorization">>, Req, <<>>),
-    case cx_auth:authenticate(Authorization) of
-        {ok, Context} ->
-            {ok, Req, Env#{handler_opts => Opts#{context => Context}}};
-        {error, unauthorized} ->
-            {Status, Body} = cx_handler:problem(unauthorized),
-            Req1 = cowboy_req:reply(
-                Status,
-                #{<<"content-type">> => <<"application/problem+json">>},
-                cx_json:encode(Body),
-                Req
-            ),
-            {stop, Req1}
+    %% Read WITHOUT a default so an absent header (undefined) is distinct from
+    %% a present-but-invalid one: RFC 6750 §3 says the challenge carries no
+    %% `error` when the request had no credentials at all, but `invalid_token`
+    %% when a token was supplied and rejected.
+    case cowboy_req:header(<<"authorization">>, Req) of
+        undefined ->
+            {stop, unauthorized(<<"Bearer">>, Req)};
+        Authorization ->
+            case cx_auth:authenticate(Authorization) of
+                {ok, Context} ->
+                    {ok, Req, Env#{handler_opts => Opts#{context => Context}}};
+                {error, unauthorized} ->
+                    {stop, unauthorized(<<"Bearer error=\"invalid_token\"">>, Req)}
+            end
     end.
+
+%% 401 with the RFC 9457 problem body and an RFC 6750 WWW-Authenticate challenge.
+-spec unauthorized(binary(), cowboy_req:req()) -> cowboy_req:req().
+unauthorized(Challenge, Req) ->
+    {Status, Body} = cx_handler:problem(unauthorized),
+    cowboy_req:reply(
+        Status,
+        #{
+            <<"content-type">> => <<"application/problem+json">>,
+            <<"www-authenticate">> => Challenge
+        },
+        cx_json:encode(Body),
+        Req
+    ).

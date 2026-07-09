@@ -78,7 +78,7 @@ post_login(Params, Req) ->
                 {ok, Subject} ->
                     Remember = maps:get(<<"remember_me">>, Params, undefined) =:= <<"1">>,
                     {SessionId, _} = cx_provider_session:create(Subject, Remember),
-                    Req1 = set_session_cookie(SessionId, Remember, Req),
+                    Req1 = cx_session_cookie:set(SessionId, Remember, Req),
                     proceed(Subject, SessionId, AuthReq, Req1);
                 {error, _} ->
                     render_login(AuthReq, <<"Invalid email or password.">>, Req)
@@ -291,14 +291,6 @@ session_from_cookie(Req) ->
             none
     end.
 
-set_session_cookie(SessionId, Remember, Req) ->
-    MaxAge =
-        case Remember of
-            true -> cx_config:get(cx_auth, session_remember_ttl_s, 2592000);
-            false -> undefined
-        end,
-    cowboy_req:set_resp_cookie(<<"cx_session">>, SessionId, Req, cookie_opts(MaxAge)).
-
 render_login(AuthReq, Error, Req) ->
     {Csrf, Req1} = fresh_csrf(Req),
     reply_html(200, cx_login_html:login_page(AuthReq, Csrf, Error), Req1).
@@ -309,7 +301,8 @@ render_picker(AuthReq, Tenants, Req) ->
 
 fresh_csrf(Req) ->
     Token = base64:encode(crypto:strong_rand_bytes(24), #{mode => urlsafe, padding => false}),
-    {Token, cowboy_req:set_resp_cookie(<<"cx_csrf">>, Token, Req, cookie_opts(undefined))}.
+    {Token,
+        cowboy_req:set_resp_cookie(<<"cx_csrf">>, Token, Req, cx_session_cookie:opts(undefined))}.
 
 check_csrf(Params, Req) ->
     Form = maps:get(<<"csrf">>, Params, undefined),
@@ -322,18 +315,6 @@ check_csrf(Params, Req) ->
         true -> ok;
         false -> error
     end.
-
-cookie_opts(MaxAge) ->
-    Base = #{http_only => true, secure => cookie_secure(), same_site => lax, path => <<"/">>},
-    case MaxAge of
-        undefined -> Base;
-        Seconds -> Base#{max_age => Seconds}
-    end.
-
-%% https-only cookies in production; the allow_insecure_jwks dev flag (plain
-%% http localhost) also relaxes this so cookies work in dev/test.
-cookie_secure() ->
-    cx_config:get(cx_auth, allow_insecure_jwks, false) =/= true.
 
 %% ---- small helpers ----
 
