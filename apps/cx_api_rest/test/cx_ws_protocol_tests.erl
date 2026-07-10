@@ -13,6 +13,10 @@ decode_test() ->
             <<"{\"type\":\"auth\",\"token\":\"tok\",\"device_id\":\"dev-1\"}">>
         )
     ),
+    ?assertEqual(
+        {reauth, <<"tok">>},
+        cx_ws_protocol:decode(<<"{\"type\":\"reauth\",\"token\":\"tok\"}">>)
+    ),
     ?assertEqual(ping, cx_ws_protocol:decode(<<"{\"type\":\"ping\"}">>)),
     ?assertEqual(activity, cx_ws_protocol:decode(<<"{\"type\":\"activity\"}">>)),
     ?assertEqual({error, invalid_frame}, cx_ws_protocol:decode(<<"not json">>)),
@@ -20,6 +24,10 @@ decode_test() ->
     ?assertEqual(
         {error, invalid_frame},
         cx_ws_protocol:decode(<<"{\"type\":\"auth\",\"token\":42}">>)
+    ),
+    ?assertEqual(
+        {error, invalid_frame},
+        cx_ws_protocol:decode(<<"{\"type\":\"reauth\",\"token\":42}">>)
     ).
 
 relevant_test() ->
@@ -58,3 +66,7 @@ ready_frame_test() ->
         #{<<"type">> := <<"ready">>, <<"user_id">> := <<"u">>, <<"device_id">> := null},
         Decoded
     ).
+
+reauth_ok_frame_test() ->
+    {ok, Decoded} = cx_json:decode(cx_ws_protocol:reauth_ok_frame()),
+    ?assertMatch(#{<<"type">> := <<"reauth_ok">>}, Decoded).
